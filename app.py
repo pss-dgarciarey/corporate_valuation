@@ -263,48 +263,37 @@ st.pyplot(fig)
 # ------------------------
 st.subheader("💰 Internal Rate of Return (IRR) Analysis")
 
-# --- SPA Instalments adjusted by MDKB
 base_instalments = [(2025, 500_000), (2026, 2_500_000), (2027, 3_500_000), (2028, 6_800_000)]
 adjusted_outflows, total_purchase_price = adjust_instalments_absolute_deduction(base_instalments, assumed_price_mdkb)
-
-# --- Ensure minimum initial outflow for realism (avoid NaN)
-total_investment = sum(abs(v) for v in adjusted_outflows.values())
-if total_investment == 0:
-    adjusted_outflows[2025] = -1_000_000  # fallback investment
-    total_investment = 1_000_000
 
 # --- IRR 1: FCF-based
 irr_cash_flows = []
 irr_rows = []
 for i, y in enumerate(years):
-    instal = adjusted_outflows.get(y, 0.0)
-    inflow = fcfs[i] + (tv if y == 2029 and not np.isnan(tv) else 0)
+    instal = adjusted_outflows.get(y, 0.0)  # negative outflow or zero
+    inflow = fcfs[i] + (tv if y == 2029 and not np.isnan(tv) else 0.0)
     net_cf = instal + inflow
     irr_cash_flows.append(net_cf)
-    irr_rows.append([y, instal, fcfs[i], (tv if y == 2029 else 0), net_cf])
+    irr_rows.append([y, instal, fcfs[i], (tv if y == 2029 else 0.0), net_cf])
 IRR_fcf = irr_bisection(irr_cash_flows)
 
-# --- IRR 2: Net Profit-based
+# --- IRR 2: Net Profit-based (structured exactly like FCF one)
 irr_cash_flows_net = []
 irr_rows_net = []
 for i, y in enumerate(years):
-    instal = adjusted_outflows.get(y, 0.0)
-    inflow = net_eur[i] + (tv if y == 2029 and not np.isnan(tv) else 0)
+    instal = adjusted_outflows.get(y, 0.0)  # same outflows
+    inflow = net_eur[i] + (tv if y == 2029 and not np.isnan(tv) else 0.0)
     net_cf = instal + inflow
     irr_cash_flows_net.append(net_cf)
-    irr_rows_net.append([y, instal, net_eur[i], (tv if y == 2029 else 0), net_cf])
-
-# sanity check: ensure there’s at least one sign change
-if not (np.any(np.array(irr_cash_flows_net) < 0) and np.any(np.array(irr_cash_flows_net) > 0)):
-    irr_cash_flows_net[0] -= total_investment  # inject the "investment" effect
+    irr_rows_net.append([y, instal, net_eur[i], (tv if y == 2029 else 0.0), net_cf])
 IRR_net = irr_bisection(irr_cash_flows_net)
 
-# --- Display IRRs
+# --- Display both IRRs
 col1, col2 = st.columns(2)
 col1.metric("IRR (FCF-based)", f"{IRR_fcf*100:.2f}%" if not np.isnan(IRR_fcf) else "N/A")
 col2.metric("IRR (Net Profit-based)", f"{IRR_net*100:.2f}%" if not np.isnan(IRR_net) else "N/A")
 
-# --- Comparison bar chart
+# --- Bar chart comparison
 fig_irr = plt.figure(figsize=(5.5, 4))
 plt.bar(["FCF-based", "Net Profit-based"], [IRR_fcf*100, IRR_net*100], color=["#0073e6", "#00b386"])
 plt.ylabel("IRR (%)")
@@ -314,6 +303,14 @@ for i, val in enumerate([IRR_fcf*100, IRR_net*100]):
         plt.text(i, val + 0.5, f"{val:.2f}%", ha="center", fontsize=10)
 st.pyplot(fig_irr)
 
+# --- IRR Cashflow Tables
+st.markdown("#### IRR Cash Flows (FCF-based)")
+df_irr = pd.DataFrame(irr_rows, columns=["Year","Instalment (outflow)","FCF (inflow)","Terminal Value (inflow)","Net CF for IRR"])
+st.dataframe(df_irr.style.format("€{:,.0f}"), use_container_width=True)
+
+st.markdown("#### IRR Cash Flows (Net Profit-based)")
+df_irr_net = pd.DataFrame(irr_rows_net, columns=["Year","Instalment (outflow)","Net Profit (inflow)","Terminal Value (inflow)","Net CF for IRR"])
+st.dataframe(df_irr_net.style.format("€{:,.0f}"), use_container_width=True)
 
 # ------------------------
 # SENSITIVITY MATRIX
