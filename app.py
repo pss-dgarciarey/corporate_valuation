@@ -260,58 +260,87 @@ st.pyplot(fig)
 # ------------------------
 st.subheader("💰 Internal Rate of Return (IRR) Analysis")
 
-# SPA schedule (used for FCF-based IRR realism)
-base_instalments = [(2025, 500_000), (2026, 2_500_000), (2027, 3_500_000), (2028, 6_800_000)]
-adjusted_outflows, total_purchase_price = adjust_instalments_absolute_deduction(base_instalments, assumed_price_mdkb)
+# --- SPA Instalments schedule
+base_instalments = [
+    (2025, 500_000),
+    (2026, 2_500_000),
+    (2027, 3_500_000),
+    (2028, 6_800_000)
+]
+adjusted_outflows, total_purchase_price = adjust_instalments_absolute_deduction(
+    base_instalments, assumed_price_mdkb
+)
 
-# --- IRR 1: FCF-based (your original structure)
+# --- IRR 1: FCF-based
 irr_cash_flows = []
 irr_rows = []
 for i, y in enumerate(years):
-    instal = adjusted_outflows.get(y, 0.0)                      # negative or zero
+    instal = adjusted_outflows.get(y, 0.0)  # negative or zero
     inflow = fcfs[i] + (tv if y == 2029 and not np.isnan(tv) else 0.0)
     net_cf = instal + inflow
     irr_cash_flows.append(net_cf)
     irr_rows.append([y, instal, fcfs[i], (tv if y == 2029 else 0.0), net_cf])
 IRR_fcf = irr_bisection(irr_cash_flows)
 
-# --- IRR 2: Net Profit-based (effective price paid at 2025)
-# Rationale: equity-style IRR — you pay the effective price at acquisition, then receive earnings.
-effective_price_paid = max(total_purchase_price - assumed_price_mdkb, 0.0)  # depends on MDKB
+# --- IRR 2: Net Profit-based (equity-style IRR)
+# Treat effective price paid (SPA total − MDKB deduction) as initial outflow at 2025
+effective_price_paid = max(total_purchase_price - assumed_price_mdkb, 0.0)
 irr_cash_flows_net = []
 irr_rows_net = []
 for i, y in enumerate(years):
-    outflow = -effective_price_paid if i == 0 else 0.0          # single negative at 2025
-    inflow  = net_eur[i] + (tv if y == 2029 and not np.isnan(tv) else 0.0)
-    net_cf  = outflow + inflow
+    outflow = -effective_price_paid if i == 0 else 0.0  # single negative in 2025
+    inflow = net_eur[i] + (tv if y == 2029 and not np.isnan(tv) else 0.0)
+    net_cf = outflow + inflow
     irr_cash_flows_net.append(net_cf)
     irr_rows_net.append([y, outflow, net_eur[i], (tv if y == 2029 else 0.0), net_cf])
 IRR_net = irr_bisection(irr_cash_flows_net)
 
-# --- Display side-by-side
+# --- Display both IRRs side by side
 col1, col2 = st.columns(2)
 col1.metric("IRR (FCF-based)", f"{IRR_fcf*100:.2f}%" if not np.isnan(IRR_fcf) else "N/A")
 col2.metric("IRR (Net Profit-based)", f"{IRR_net*100:.2f}%" if not np.isnan(IRR_net) else "N/A")
 
-# --- Comparison bar chart
+# --- Bar chart comparison
 fig_irr = plt.figure(figsize=(5.5, 4))
-plt.bar(["FCF-based", "Net Profit-based"], [IRR_fcf*100, IRR_net*100])
+plt.bar(["FCF-based", "Net Profit-based"], [IRR_fcf*100, IRR_net*100], color=["#0073e6", "#00b386"])
 plt.ylabel("IRR (%)")
 plt.title("IRR Comparison")
-vals = [IRR_fcf*100, IRR_net*100]
-for i, val in enumerate(vals):
+for i, val in enumerate([IRR_fcf*100, IRR_net*100]):
     if not np.isnan(val):
         plt.text(i, val + 0.5, f"{val:.2f}%", ha="center", fontsize=10)
 st.pyplot(fig_irr)
 
-# --- IRR Cashflow Tables
+# --- IRR Cash Flow Tables
 st.markdown("#### IRR Cash Flows (FCF-based)")
-df_irr = pd.DataFrame(irr_rows, columns=["Year","Instalment (outflow)","FCF (inflow)","Terminal Value (inflow)","Net CF for IRR"])
-st.dataframe(df_irr.style.format("€{:,.0f}"), use_container_width=True)
+df_irr = pd.DataFrame(
+    irr_rows,
+    columns=["Year", "Instalment (outflow)", "FCF (inflow)", "Terminal Value (inflow)", "Net CF for IRR"]
+)
+st.dataframe(
+    df_irr.style.format({
+        "Instalment (outflow)": "€{:,.0f}",
+        "FCF (inflow)": "€{:,.0f}",
+        "Terminal Value (inflow)": "€{:,.0f}",
+        "Net CF for IRR": "€{:,.0f}",
+    }),
+    use_container_width=True,
+)
 
 st.markdown("#### IRR Cash Flows (Net Profit-based)")
-df_irr_net = pd.DataFrame(irr_rows_net, columns=["Year","Outflow @2025 (effective price)","Net Profit (inflow)","Terminal Value (inflow)","Net CF for IRR"])
-st.dataframe(df_irr_net.style.format("€{:,.0f}"), use_container_width=True)
+df_irr_net = pd.DataFrame(
+    irr_rows_net,
+    columns=["Year", "Outflow @2025 (effective price)", "Net Profit (inflow)", "Terminal Value (inflow)", "Net CF for IRR"]
+)
+st.dataframe(
+    df_irr_net.style.format({
+        "Outflow @2025 (effective price)": "€{:,.0f}",
+        "Net Profit (inflow)": "€{:,.0f}",
+        "Terminal Value (inflow)": "€{:,.0f}",
+        "Net CF for IRR": "€{:,.0f}",
+    }),
+    use_container_width=True,
+)
+
 
 # ------------------------
 # SENSITIVITY MATRIX
