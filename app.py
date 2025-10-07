@@ -13,10 +13,10 @@ from dotenv import load_dotenv
 # ------------------------
 load_dotenv()
 USERS = {
-    os.getenv("d.garcia"): os.getenv("15042002"),
-    os.getenv("t.held"): os.getenv("cfo.access"),
-    os.getenv("m.peter"): os.getenv("h.controlling"),
-    os.getenv("b.arrieta"): os.getenv("laikapremonor"),
+    os.getenv("USER1"): os.getenv("USER1_PWD"),
+    os.getenv("USER2"): os.getenv("USER2_PWD"),
+    os.getenv("USER3"): os.getenv("USER3_PWD"),
+    os.getenv("USER4"): os.getenv("USER4_PWD"),
 }
 
 # ------------------------
