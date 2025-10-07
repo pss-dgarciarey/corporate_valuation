@@ -181,9 +181,9 @@ st.sidebar.header("Operational Assumptions")
 dep_pct = st.sidebar.number_input("Depreciation % of Sales", value=0.01, step=0.001, format="%.4f", min_value=-1.0, max_value=1.0)
 capex_pct = st.sidebar.number_input("CapEx % of Sales", value=0.01, step=0.001, format="%.4f", min_value=-1.0, max_value=1.0)
 use_nwc = st.sidebar.checkbox("Include ΔNWC adjustment", value=True)
-nwc_pct = 0.03
+nwc_pct = 0.10
 if use_nwc:
-    nwc_pct = st.sidebar.number_input("ΔNWC % of ΔSales", value=0.03, step=0.005, format="%.4f", min_value=-1.0, max_value=1.0)
+    nwc_pct = st.sidebar.number_input("ΔNWC % of ΔSales", value=0.10, step=0.005, format="%.4f", min_value=-1.0, max_value=1.0)
 sales_growth = st.sidebar.number_input("Sales growth for 2029", value=0.02, step=0.005, format="%.4f", min_value=-1.0, max_value=1.0)
 
 st.sidebar.markdown("---")
