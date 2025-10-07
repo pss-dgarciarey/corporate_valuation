@@ -34,10 +34,13 @@ if not st.session_state["auth"]:
             st.session_state["auth"] = True
             st.session_state["user"] = user
             st.success(f"Welcome, {user}!")
-            st.experimental_rerun()
         else:
             st.error("Invalid credentials. Please try again.")
+        st.stop()
+
+if not st.session_state["auth"]:
     st.stop()
+
 
 # ------------------------
 # CONFIG
