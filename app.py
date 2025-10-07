@@ -202,13 +202,19 @@ instalments = {
 }
 
 irr_cash_flows = [
-    instalments.get(2025, 0) + fcfs[0],
-    instalments.get(2026, 0) + fcfs[1],
-    instalments.get(2027, 0) + fcfs[2],
-    instalments.get(2028, 0) + fcfs[3],
+    instalments[2025],
+    instalments[2026],
+    instalments[2027],
+    instalments[2028],
+    fcfs[0],
+    fcfs[1],
+    fcfs[2],
+    fcfs[3],
     fcfs[4] + pv_tv,
 ]
+
 IRR = safe_irr(irr_cash_flows)
+
 
 # ------------------------
 # METRICS DISPLAY
