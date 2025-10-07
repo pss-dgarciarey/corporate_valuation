@@ -7,6 +7,7 @@ import numpy as np, pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
 from dotenv import load_dotenv
+from numpy_financial import irr
 
 # ------------------------
 # LOAD SECRETS / ENV
@@ -28,7 +29,7 @@ USER_NAMES = {
     "b.arrieta": "Borja Arrieta",
     "m.peter": "Michel Peter",
     "c.bahn": "Cristoph Bahn",
-    "tgv": "Tomas Garcia Villanueva"
+    "tgv": "Tomas Garcia Villanueva",
 }
 
 # ------------------------
@@ -73,8 +74,8 @@ data = {
     "EBIT_kEUR":  [600, 2106, 5237, 7456, 7641],
     "Net_kEUR":   [535, 2135, 4845, 5218, 5322],
     "Equity_kEUR":[12596, 14731, 19219, 24750, 25850],
-    "Cash_kEUR":  [8176, 11205, 20394, 28367, 36000],  # manual 2029 used
-    "FCF_kEUR":   [-6884, 2749, 9054, 7716, 5322],      # manual 2029 used
+    "Cash_kEUR":  [8176, 11205, 20394, 28367, 36000],
+    "FCF_kEUR":   [-6884, 2749, 9054, 7716, 5322],
 }
 df_base = pd.DataFrame(data, index=years)
 
@@ -140,6 +141,12 @@ st.sidebar.header("Debt & Financing")
 debt_amount = st.sidebar.number_input("Debt (€)", value=0.0, step=1_000_000.0, format="%.2f", min_value=-1e9, max_value=1e9)
 rd = st.sidebar.number_input("Cost of Debt (Rd)", value=0.04, step=0.005, format="%.4f", min_value=-1.0, max_value=1.0)
 
+st.sidebar.markdown("---")
+st.sidebar.header("Acquisition & IRR Settings")
+assumed_price_mdkb = st.sidebar.number_input(
+    "Assumed Price for MDKB (€)", value=0.0, step=100_000.0, format="%.0f", min_value=-1e9, max_value=1e9
+)
+
 # ------------------------
 # CALCULATIONS
 # ------------------------
@@ -159,19 +166,13 @@ for i, y in enumerate(years):
     dep = s * dep_pct
     capex = s * capex_pct
     dNWC = (s - prev_s) * nwc_pct if (use_nwc and i > 0) else 0
-
     fcf = (e * (1 - tax)) + dep - capex - dNWC
-
-    # --- manual override for 2029 FCF ---
     if y == 2029:
         fcf = df_base.loc[y, "FCF_kEUR"] * 1000
-
     fcfs.append(fcf)
 
-# --- override for cash (final year) ---
 cash = df_base.loc[2029, "Cash_kEUR"] * 1000
 
-# --- DCF ---
 pv_fcfs = pv(fcfs, WACC)
 tv = fcfs[-1] * (1 + g) / (WACC - g) if WACC > g else np.nan
 pv_tv = tv / ((1 + WACC) ** len(fcfs)) if not np.isnan(tv) else 0
@@ -179,15 +180,41 @@ EV = sum(pv_fcfs) + pv_tv
 equity_value = EV + cash - D
 
 # ------------------------
+# IRR CALCULATION (SPA Instalments + MDKB Adjustment)
+# ------------------------
+total_purchase_price = 13_300_000  # total combined price from SPA
+ratio = max(0, (total_purchase_price - assumed_price_mdkb) / total_purchase_price)
+
+instalments = {
+    2025: -500_000 * ratio,
+    2026: -2_500_000 * ratio,
+    2027: -3_500_000 * ratio,
+    2028: -6_800_000 * ratio,
+}
+
+irr_cash_flows = [
+    instalments.get(2025, 0) + fcfs[0],
+    instalments.get(2026, 0) + fcfs[1],
+    instalments.get(2027, 0) + fcfs[2],
+    instalments.get(2028, 0) + fcfs[3],
+    fcfs[4] + pv_tv,  # last year includes terminal value
+]
+IRR = irr(irr_cash_flows)
+
+# ------------------------
 # METRICS DISPLAY
 # ------------------------
-c1, c2, c3, c4, c5 = st.columns(5)
+c1, c2, c3, c4, c5, c6 = st.columns(6)
 c1.metric("Cost of Equity (Re)", f"{Re*100:.2f}%")
 c2.metric("Cost of Debt (Rd)", f"{rd*100:.2f}%")
 c3.metric("WACC", f"{WACC*100:.2f}%")
 c4.metric("Enterprise Value (EV)", f"€{EV:,.0f}")
 c5.metric("Equity Value", f"€{equity_value:,.0f}")
+c6.metric("IRR (Unlevered)", f"{IRR*100:.2f}%")
 
+# ------------------------
+# DCF TABLE
+# ------------------------
 df_results = pd.DataFrame({
     "Year": years,
     "Sales (€)": sales_eur,
@@ -196,7 +223,6 @@ df_results = pd.DataFrame({
     "FCF (€)": fcfs,
     "PV(FCF)": pv_fcfs,
 })
-
 st.subheader("DCF Inputs & Results (FY 2025–2029)")
 st.dataframe(df_results.style.format({
     "Sales (€)": "€{:,.0f}",
@@ -260,12 +286,15 @@ if st.button("💾 Export locally"):
             "dep_pct": dep_pct, "capex_pct": capex_pct,
             "use_nwc": use_nwc, "nwc_pct": nwc_pct,
             "debt": D, "EV": EV, "EquityValue": equity_value,
-            "WACC": WACC, "fcf": fcfs, "pv_fcfs": pv_fcfs, "pv_tv": pv_tv
+            "WACC": WACC, "fcf": fcfs, "pv_fcfs": pv_fcfs,
+            "pv_tv": pv_tv, "IRR": IRR, "assumed_price_mdkb": assumed_price_mdkb
         }, f, indent=2)
     fig.savefig(os.path.join(out, "DCF_chart.png"), dpi=150, bbox_inches="tight")
     st.success(f"✅ Exported locally to: {out}")
 
-# Browser export
+# ------------------------
+# BROWSER EXPORT
+# ------------------------
 st.markdown("#### ⬇️ Download files to your device")
 option = st.multiselect(
     "Select what to download:",
@@ -277,42 +306,28 @@ excel_buffer = io.BytesIO()
 with pd.ExcelWriter(excel_buffer, engine="xlsxwriter") as writer:
     df_summary = pd.DataFrame({
         "Metric": [
-            "Enterprise Value (EV)", "Equity Value",
+            "Enterprise Value (EV)", "Equity Value", "IRR (Unlevered)",
             "Cost of Equity (Re)", "Cost of Debt (Rd)", "WACC",
             "Risk-free rate (Rf)", "Market risk premium (MRP)",
             "Beta (β)", "Tax rate (T)", "Terminal growth (g)",
             "Depreciation % of Sales", "CapEx % of Sales", "ΔNWC % of ΔSales",
-            "Debt (D)", "Equity (E)", "Include ΔNWC?", "Cash (final year)"
+            "Debt (D)", "Equity (E)", "Include ΔNWC?", "Cash (final year)",
+            "Assumed Price MDKB (€)"
         ],
         "Value": [
-            f"€{EV:,.0f}", f"€{equity_value:,.0f}",
+            f"€{EV:,.0f}", f"€{equity_value:,.0f}", f"{IRR*100:.2f}%",
             f"{Re*100:.2f}%", f"{rd*100:.2f}%", f"{WACC*100:.2f}%",
             f"{rf*100:.2f}%", f"{mrp*100:.2f}%", beta,
             f"{tax*100:.2f}%", f"{g*100:.2f}%", f"{dep_pct*100:.2f}%",
             f"{capex_pct*100:.2f}%", f"{nwc_pct*100:.2f}%", f"€{D:,.0f}",
-            f"€{E:,.0f}", "Yes" if use_nwc else "No", f"€{cash:,.0f}"
+            f"€{E:,.0f}", "Yes" if use_nwc else "No", f"€{cash:,.0f}",
+            f"€{assumed_price_mdkb:,.0f}"
         ]
     })
     df_summary.to_excel(writer, sheet_name="Summary", index=False)
     df_results.to_excel(writer, sheet_name="DCF_Results", index=False)
     df_sens.to_excel(writer, sheet_name="Sensitivity", index=True)
 excel_buffer.seek(0)
-
-if "Summary CSV" in option:
-    st.download_button(
-        label="Download Summary CSV",
-        data=df_results.to_csv(index=False).encode(),
-        file_name="PSS_Valuation_Summary.csv",
-        mime="text/csv"
-    )
-
-if "Sensitivity CSV" in option:
-    st.download_button(
-        label="Download Sensitivity CSV",
-        data=df_sens.to_csv().encode(),
-        file_name="PSS_Sensitivity_Matrix.csv",
-        mime="text/csv"
-    )
 
 if "Excel (Full Report)" in option:
     st.download_button(
@@ -321,15 +336,3 @@ if "Excel (Full Report)" in option:
         file_name=f"PSS_Valuation_Report_{dt.datetime.now().strftime('%Y%m%d')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-
-if "Chart (PNG)" in option:
-    import tempfile
-    tmpfile = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
-    fig.savefig(tmpfile.name, dpi=150, bbox_inches="tight")
-    with open(tmpfile.name, "rb") as f:
-        st.download_button(
-            label="Download DCF Chart (PNG)",
-            data=f,
-            file_name="DCF_Chart.png",
-            mime="image/png"
-        )
