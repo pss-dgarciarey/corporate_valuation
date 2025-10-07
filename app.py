@@ -19,6 +19,14 @@ USERS = {
     os.getenv("USER4"): os.getenv("USER4_PWD"),
 }
 
+# Friendly display names
+USER_NAMES = {
+    "d.garcia": "Daniel Garcia Rey",
+    "t.held": "Thomas Held",
+    "b.arrieta": "Borja Arrieta",
+    "m.peter": "Michel Peter",
+}
+
 # ------------------------
 # SIMPLE LOGIN SYSTEM
 # ------------------------
@@ -33,7 +41,8 @@ if not st.session_state["auth"]:
         if user in USERS and pwd == USERS[user]:
             st.session_state["auth"] = True
             st.session_state["user"] = user
-            st.success(f"Welcome, {user}!")
+            name = USER_NAMES.get(user, user)
+            st.success(f"Welcome back, {name.split()[0]}!")
         else:
             st.error("Invalid credentials. Please try again.")
     st.stop()
@@ -52,10 +61,9 @@ def ts_folder(root):
     return path
 
 # ------------------------
-# BASE DATA (hard-coded)
+# BASE DATA
 # ------------------------
 years = [2025, 2026, 2027, 2028, 2029]
-
 data = {
     "Sales_kEUR": [55650, 92408, 113161, 120765, 123180],
     "EBIT_kEUR":  [600, 2106, 5237, 7456, 7641],
@@ -67,7 +75,7 @@ data = {
 df_base = pd.DataFrame(data, index=years)
 
 # ------------------------
-# FINANCIAL FUNCTIONS
+# FUNCTIONS
 # ------------------------
 def capm_cost_equity(rf, mrp, beta):
     return rf + beta * mrp
@@ -86,7 +94,9 @@ def pv(values, r):
 st.set_page_config(page_title="PSS Valuation", layout="wide")
 st.title("💼 Power Service Solutions GmbH — DCF & WACC Model")
 
-st.markdown(f"👤 Logged in as **{st.session_state['user']}**")
+display_name = USER_NAMES.get(st.session_state["user"], st.session_state["user"])
+login_time = dt.datetime.now().strftime("%H:%M")
+st.markdown(f"👤 Logged in as **{display_name}** | Session started at **{login_time}**")
 
 st.subheader("Excel Extract — Key Lines (FY 2025–2029)")
 st.dataframe(
@@ -105,7 +115,6 @@ st.dataframe(
 # SIDEBAR INPUTS
 # ------------------------
 st.sidebar.header("Capital & Risk Assumptions")
-
 rf = st.sidebar.number_input("Risk-free rate (Rf)", value=0.027, step=0.001)
 mrp = st.sidebar.number_input("Market risk premium (MRP)", value=0.04, step=0.001)
 beta = st.sidebar.number_input("Equity beta (β)", value=1.2, step=0.05)
@@ -120,7 +129,6 @@ use_nwc = st.sidebar.checkbox("Include ΔNWC adjustment", value=True)
 nwc_pct = 0.03
 if use_nwc:
     nwc_pct = st.sidebar.number_input("ΔNWC % of ΔSales", value=0.03, step=0.005)
-
 sales_growth = st.sidebar.number_input("Sales growth for 2029", value=0.02, step=0.005)
 
 st.sidebar.markdown("---")
@@ -129,16 +137,13 @@ debt_amount = st.sidebar.number_input("Debt (€)", value=0.0, step=1_000_000.0)
 rd = st.sidebar.number_input("Cost of Debt (Rd)", value=0.04, step=0.005)
 
 # ------------------------
-# WACC CALCULATION
+# CALCULATIONS
 # ------------------------
 E = df_base["Equity_kEUR"].iloc[-1] * 1000
 D = debt_amount
 Re = capm_cost_equity(rf, mrp, beta)
 WACC = compute_wacc(E, D, Re, rd, tax)
 
-# ------------------------
-# DCF CALCULATIONS
-# ------------------------
 sales_eur = df_base["Sales_kEUR"].values * 1000
 ebit_eur = df_base["EBIT_kEUR"].values * 1000
 fcfs = []
@@ -178,20 +183,18 @@ df_results = pd.DataFrame({
     "FCF (€)": fcfs,
     "PV(FCF)": pv_fcfs,
 })
+
 st.subheader("DCF Inputs & Results (FY 2025–2029)")
-st.dataframe(
-    df_results.style.format({
-        "Sales (€)": "€{:,.0f}",
-        "EBIT (€)": "€{:,.0f}",
-        "Net (€)": "€{:,.0f}",
-        "FCF (€)": "€{:,.0f}",
-        "PV(FCF)": "€{:,.0f}",
-    }),
-    use_container_width=True,
-)
+st.dataframe(df_results.style.format({
+    "Sales (€)": "€{:,.0f}",
+    "EBIT (€)": "€{:,.0f}",
+    "Net (€)": "€{:,.0f}",
+    "FCF (€)": "€{:,.0f}",
+    "PV(FCF)": "€{:,.0f}",
+}), use_container_width=True)
 
 # ------------------------
-# PLOT
+# CHART
 # ------------------------
 fig = plt.figure(figsize=(9, 4.5))
 plt.plot(years, fcfs, "o-", label="FCF (€)")
@@ -199,7 +202,8 @@ plt.plot(years, pv_fcfs, "o-", label="PV(FCF)")
 plt.axhline(0, color="gray", lw=0.8)
 plt.legend()
 plt.title("Free Cash Flow and Present Value (FY 2025–2029)")
-plt.xlabel("Year"); plt.ylabel("EUR")
+plt.xlabel("Year")
+plt.ylabel("EUR")
 st.pyplot(fig)
 
 # ------------------------
@@ -228,12 +232,12 @@ st.dataframe(df_sens.style.format("€{:,.0f}"), use_container_width=True)
 st.markdown("### 📦 Export Options")
 st.info(
     "Choose how to export your results:\n\n"
-    "- **Local Save (for VSCode/Desktop)**: creates a timestamped folder in your `results/` directory.\n"
-    "- **Browser Download**: lets you directly download CSV/Excel/chart files to your device."
+    "- **Local Save**: creates a timestamped folder under `results/` (for VSCode/Desktop use)\n"
+    "- **Browser Download**: generates downloadable files directly from your browser."
 )
 
-# --- Option A: local export ---
-if st.button("💾 Export locally (for VSCode use)"):
+# Local export
+if st.button("💾 Export locally"):
     out = ts_folder(RESULTS_DIR)
     df_results.to_csv(os.path.join(out, "valuation_summary.csv"), index=False)
     df_sens.to_csv(os.path.join(out, "sensitivity_matrix.csv"))
@@ -249,23 +253,40 @@ if st.button("💾 Export locally (for VSCode use)"):
     fig.savefig(os.path.join(out, "DCF_chart.png"), dpi=150, bbox_inches="tight")
     st.success(f"✅ Exported locally to: {out}")
 
-# --- Option B: browser download ---
+# Browser export
 st.markdown("#### ⬇️ Download files to your device")
-
 option = st.multiselect(
     "Select what to download:",
     ["Summary CSV", "Sensitivity CSV", "Excel (Full Report)", "Chart (PNG)"],
     default=["Excel (Full Report)"]
 )
 
-# Prepare Excel buffer
+# Excel report (with assumptions and results)
 excel_buffer = io.BytesIO()
 with pd.ExcelWriter(excel_buffer, engine="xlsxwriter") as writer:
+    df_summary = pd.DataFrame({
+        "Metric": [
+            "Enterprise Value (EV)", "Equity Value",
+            "Cost of Equity (Re)", "Cost of Debt (Rd)", "WACC",
+            "Risk-free rate (Rf)", "Market risk premium (MRP)",
+            "Beta (β)", "Tax rate (T)", "Terminal growth (g)",
+            "Depreciation % of Sales", "CapEx % of Sales", "ΔNWC % of ΔSales",
+            "Debt (D)", "Equity (E)", "Include ΔNWC?", "Cash (final year)"
+        ],
+        "Value": [
+            f"€{EV:,.0f}", f"€{equity_value:,.0f}",
+            f"{Re*100:.2f}%", f"{rd*100:.2f}%", f"{WACC*100:.2f}%",
+            f"{rf*100:.2f}%", f"{mrp*100:.2f}%", beta,
+            f"{tax*100:.2f}%", f"{g*100:.2f}%", f"{dep_pct*100:.2f}%",
+            f"{capex_pct*100:.2f}%", f"{nwc_pct*100:.2f}%", f"€{D:,.0f}",
+            f"€{E:,.0f}", "Yes" if use_nwc else "No", f"€{cash:,.0f}"
+        ]
+    })
+    df_summary.to_excel(writer, sheet_name="Summary", index=False)
     df_results.to_excel(writer, sheet_name="DCF_Results", index=False)
     df_sens.to_excel(writer, sheet_name="Sensitivity", index=True)
 excel_buffer.seek(0)
 
-# Offer selected downloads
 if "Summary CSV" in option:
     st.download_button(
         label="Download Summary CSV",
@@ -284,9 +305,9 @@ if "Sensitivity CSV" in option:
 
 if "Excel (Full Report)" in option:
     st.download_button(
-        label="Download Excel Report",
+        label="Download Excel Report (with Assumptions)",
         data=excel_buffer,
-        file_name="PSS_Valuation_Report.xlsx",
+        file_name=f"PSS_Valuation_Report_{dt.datetime.now().strftime('%Y%m%d')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
