@@ -54,6 +54,7 @@ if not st.session_state["auth"]:
 # ------------------------
 # CONFIG
 # ------------------------
+st.set_page_config(page_title="PSS Valuation", layout="wide")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 RESULTS_DIR = os.path.join(BASE_DIR, "results")
 os.makedirs(RESULTS_DIR, exist_ok=True)
@@ -73,8 +74,8 @@ data = {
     "EBIT_kEUR":  [600, 2106, 5237, 7456, 7641],
     "Net_kEUR":   [535, 2135, 4845, 5218, 5322],
     "Equity_kEUR":[12596, 14731, 19219, 24750, 25850],
-    "Cash_kEUR":  [8176, 11205, 20394, 28367, 36000],
-    "FCF_kEUR":   [-6884, 2749, 9054, 7716, 5322],
+    "Cash_kEUR":  [8176, 11205, 20394, 28367, 36000],  # 2029 used directly
+    "FCF_kEUR":   [-6884, 2749, 9054, 7716, 5322],      # 2029 used directly
 }
 df_base = pd.DataFrame(data, index=years)
 
@@ -92,22 +93,62 @@ def compute_wacc(E, D, Re, Rd, tax):
 def pv(values, r):
     return [v / ((1 + r) ** (i + 1)) for i, v in enumerate(values)]
 
-def safe_irr(cash_flows):
-    """Robust IRR calculation that returns NaN safely if undefined."""
-    cf = np.array(cash_flows, dtype=float)
-    if np.any(cf < 0) and np.any(cf > 0):
-        try:
-            return np.irr(cf)
-        except Exception:
-            return np.nan
-    return np.nan
+def npv_from_rate(rate, cashflows):
+    return sum(cf / ((1 + rate) ** t) for t, cf in enumerate(cashflows))
+
+def irr_bisection(cashflows, low=-0.9999, high=10.0, max_iter=200, tol=1e-8):
+    """Robust IRR solver without external deps. Returns NaN if no sign-change bracket."""
+    cf = np.array(cashflows, dtype=float)
+    # Must have at least one negative and one positive
+    if not (np.any(cf < 0) and np.any(cf > 0)):
+        return float("nan")
+    f_low = npv_from_rate(low, cf)
+    f_high = npv_from_rate(high, cf)
+    # Expand upper bound until sign change or cap
+    expand = 0
+    while f_low * f_high > 0 and high < 1e6 and expand < 50:
+        high *= 2
+        f_high = npv_from_rate(high, cf)
+        expand += 1
+    if f_low * f_high > 0:
+        return float("nan")
+    # Bisection
+    for _ in range(max_iter):
+        mid = (low + high) / 2
+        f_mid = npv_from_rate(mid, cf)
+        if abs(f_mid) < tol:
+            return mid
+        if f_low * f_mid < 0:
+            high, f_high = mid, f_mid
+        else:
+            low, f_low = mid, f_mid
+    return mid
+
+def adjust_instalments_absolute_deduction(base, deduction):
+    """
+    Reduce instalments by an absolute amount, starting from LAST tranche backward,
+    returning negative values (cash outflows) per year.
+    base: list[(year, amount>0)]
+    deduction: amount>=0 to subtract from total
+    """
+    total = sum(a for _, a in base)
+    deduction = min(max(deduction, 0.0), total)
+    remaining = deduction
+    adjusted = []
+    # Walk backwards to reduce the tail first (SPA-like adjustments)
+    for year, amt in reversed(base):
+        red = min(amt, remaining)
+        new_amt = amt - red
+        adjusted.append((year, -new_amt))  # negative for outflow
+        remaining -= red
+    # Put back in chronological order
+    adjusted.sort(key=lambda x: x[0])
+    return dict(adjusted), total
 
 # ------------------------
-# STREAMLIT APP UI
+# UI HEADER
 # ------------------------
-st.set_page_config(page_title="PSS Valuation", layout="wide")
 st.title("💼 Power Service Solutions GmbH — DCF & WACC Model")
-
 display_name = USER_NAMES.get(st.session_state["user"], st.session_state["user"])
 login_time = dt.datetime.now().strftime("%H:%M")
 st.markdown(f"👤 Logged in as **{display_name}** | Session started at **{login_time}**")
@@ -153,11 +194,12 @@ rd = st.sidebar.number_input("Cost of Debt (Rd)", value=0.04, step=0.005, format
 st.sidebar.markdown("---")
 st.sidebar.header("Acquisition & IRR Settings")
 assumed_price_mdkb = st.sidebar.number_input(
-    "Assumed Price for MDKB (€)", value=0.0, step=100_000.0, format="%.0f", min_value=0.0, max_value=1e9
+    "Assumed Price for MDKB (€)",
+    value=0.0, step=100_000.0, format="%.0f", min_value=0.0, max_value=1e9
 )
 
 # ------------------------
-# CALCULATIONS
+# CALCULATIONS (DCF)
 # ------------------------
 E = df_base["Equity_kEUR"].iloc[-1] * 1000
 D = debt_amount
@@ -165,9 +207,9 @@ Re = capm_cost_equity(rf, mrp, beta)
 WACC = compute_wacc(E, D, Re, rd, tax)
 
 sales_eur = df_base["Sales_kEUR"].values * 1000
-ebit_eur = df_base["EBIT_kEUR"].values * 1000
-fcfs = []
+ebit_eur  = df_base["EBIT_kEUR"].values * 1000
 
+fcfs = []
 for i, y in enumerate(years):
     s = sales_eur[i]
     prev_s = sales_eur[i - 1] if i > 0 else s
@@ -177,44 +219,36 @@ for i, y in enumerate(years):
     dNWC = (s - prev_s) * nwc_pct if (use_nwc and i > 0) else 0
     fcf = (e * (1 - tax)) + dep - capex - dNWC
     if y == 2029:
-        fcf = df_base.loc[y, "FCF_kEUR"] * 1000
+        fcf = df_base.loc[y, "FCF_kEUR"] * 1000  # manual override 2029
     fcfs.append(fcf)
 
 cash = df_base.loc[2029, "Cash_kEUR"] * 1000
 
 pv_fcfs = pv(fcfs, WACC)
-tv = fcfs[-1] * (1 + g) / (WACC - g) if WACC > g else np.nan
+tv = fcfs[-1] * (1 + g) / (WACC - g) if WACC > g else np.nan  # TV at 2029 (NOT discounted)
 pv_tv = tv / ((1 + WACC) ** len(fcfs)) if not np.isnan(tv) else 0
 EV = sum(pv_fcfs) + pv_tv
 equity_value = EV + cash - D
 
 # ------------------------
-# IRR CALCULATION (SPA Instalments + MDKB Adjustment)
+# IRR: SPA Instalments with ABSOLUTE MDKB Deduction (tail-first)
 # ------------------------
-total_purchase_price = 13_300_000
-ratio = max(0, (total_purchase_price - assumed_price_mdkb) / total_purchase_price)
+base_instalments = [(2025, 500_000), (2026, 2_500_000), (2027, 3_500_000), (2028, 6_800_000)]
+adjusted_outflows, total_purchase_price = adjust_instalments_absolute_deduction(
+    base_instalments, deduction=assumed_price_mdkb
+)
 
-instalments = {
-    2025: -500_000 * ratio,
-    2026: -2_500_000 * ratio,
-    2027: -3_500_000 * ratio,
-    2028: -6_800_000 * ratio,
-}
+# Build per-year net cash flows (instalment + FCF), add TV in 2029
+irr_cash_flows = []
+irr_rows = []
+for i, y in enumerate(years):
+    instal = adjusted_outflows.get(y, 0.0)              # negative or zero
+    inflow = fcfs[i] + (tv if y == 2029 and not np.isnan(tv) else 0.0)
+    net_cf = instal + inflow
+    irr_cash_flows.append(net_cf)
+    irr_rows.append([y, instal, fcfs[i], (tv if y == 2029 and not np.isnan(tv) else 0.0), net_cf])
 
-irr_cash_flows = [
-    instalments[2025],
-    instalments[2026],
-    instalments[2027],
-    instalments[2028],
-    fcfs[0],
-    fcfs[1],
-    fcfs[2],
-    fcfs[3],
-    fcfs[4] + pv_tv,
-]
-
-IRR = safe_irr(irr_cash_flows)
-
+IRR = irr_bisection(irr_cash_flows)
 
 # ------------------------
 # METRICS DISPLAY
@@ -228,7 +262,7 @@ c5.metric("Equity Value", f"€{equity_value:,.0f}")
 c6.metric("IRR (Unlevered)", f"{IRR*100:.2f}%" if not np.isnan(IRR) else "N/A")
 
 # ------------------------
-# DCF TABLE
+# TABLES & CHARTS
 # ------------------------
 df_results = pd.DataFrame({
     "Year": years,
@@ -246,3 +280,154 @@ st.dataframe(df_results.style.format({
     "FCF (€)": "€{:,.0f}",
     "PV(FCF)": "€{:,.0f}",
 }), use_container_width=True)
+
+# IRR cashflow audit table
+st.subheader("IRR Cash Flows (Instalments + FCF, TV in 2029)")
+df_irr = pd.DataFrame(irr_rows, columns=["Year","Instalment (outflow)","FCF (inflow)","Terminal Value (inflow)","Net CF for IRR"])
+st.dataframe(df_irr.style.format({
+    "Instalment (outflow)": "€{:,.0f}",
+    "FCF (inflow)": "€{:,.0f}",
+    "Terminal Value (inflow)": "€{:,.0f}",
+    "Net CF for IRR": "€{:,.0f}",
+}), use_container_width=True)
+
+# Chart
+fig = plt.figure(figsize=(9, 4.5))
+plt.plot(years, fcfs, "o-", label="FCF (€)")
+plt.plot(years, pv_fcfs, "o-", label="PV(FCF)")
+plt.axhline(0, color="gray", lw=0.8)
+plt.legend()
+plt.title("Free Cash Flow and Present Value (FY 2025–2029)")
+plt.xlabel("Year")
+plt.ylabel("EUR")
+st.pyplot(fig)
+
+# ------------------------
+# SENSITIVITY MATRIX
+# ------------------------
+st.subheader("📊 Sensitivity Analysis — EV by WACC & Terminal Growth")
+wacc_range = np.arange(max(0.05, WACC - 0.02), WACC + 0.025, 0.005)
+g_range = np.arange(g - 0.01, g + 0.015, 0.005)
+matrix = []
+for w in wacc_range:
+    row = []
+    for gg in g_range:
+        tv_test = fcfs[-1] * (1 + gg) / (w - gg) if w > gg else np.nan
+        ev_test = sum(pv(fcfs, w)) + (tv_test / ((1 + w) ** len(fcfs)) if not np.isnan(tv_test) else 0.0)
+        row.append(ev_test)
+    matrix.append(row)
+df_sens = pd.DataFrame(matrix, index=[f"{x*100:.1f}%" for x in wacc_range],
+                       columns=[f"{y*100:.1f}%" for y in g_range])
+st.dataframe(df_sens.style.format("€{:,.0f}"), use_container_width=True)
+
+# ------------------------
+# EXPORT OPTIONS
+# ------------------------
+st.markdown("### 📦 Export Options")
+st.info(
+    "Choose how to export your results:\n\n"
+    "- **Local Save**: creates a timestamped folder under `results/` (for VSCode/Desktop use)\n"
+    "- **Browser Download**: generates downloadable files directly from your browser."
+)
+
+if st.button("💾 Export locally"):
+    out = ts_folder(RESULTS_DIR)
+    df_results.to_csv(os.path.join(out, "valuation_summary.csv"), index=False)
+    df_sens.to_csv(os.path.join(out, "sensitivity_matrix.csv"))
+    df_irr.to_csv(os.path.join(out, "irr_cashflows.csv"), index=False)
+    with open(os.path.join(out, "assumptions.json"), "w") as f:
+        json.dump({
+            "rf": rf, "mrp": mrp, "beta": beta,
+            "Re": Re, "Rd": rd, "tax": tax, "g": g,
+            "dep_pct": dep_pct, "capex_pct": capex_pct,
+            "use_nwc": use_nwc, "nwc_pct": nwc_pct,
+            "debt": D, "EV": EV, "EquityValue": equity_value,
+            "WACC": WACC, "fcf": fcfs, "pv_fcfs": pv_fcfs,
+            "tv": tv, "pv_tv": pv_tv, "IRR": IRR,
+            "assumed_price_mdkb": assumed_price_mdkb,
+            "adjusted_instalments": adjusted_outflows
+        }, f, indent=2)
+    fig.savefig(os.path.join(out, "DCF_chart.png"), dpi=150, bbox_inches="tight")
+    st.success(f"✅ Exported locally to: {out}")
+
+# Browser export
+st.markdown("#### ⬇️ Download files to your device")
+option = st.multiselect(
+    "Select what to download:",
+    ["Summary CSV", "Sensitivity CSV", "IRR Cash Flows CSV", "Excel (Full Report)", "Chart (PNG)"],
+    default=["Excel (Full Report)"]
+)
+
+excel_buffer = io.BytesIO()
+with pd.ExcelWriter(excel_buffer, engine="xlsxwriter") as writer:
+    df_summary = pd.DataFrame({
+        "Metric": [
+            "Enterprise Value (EV)", "Equity Value", "IRR (Unlevered)",
+            "Cost of Equity (Re)", "Cost of Debt (Rd)", "WACC",
+            "Risk-free rate (Rf)", "Market risk premium (MRP)",
+            "Beta (β)", "Tax rate (T)", "Terminal growth (g)",
+            "Depreciation % of Sales", "CapEx % of Sales", "ΔNWC % of ΔSales",
+            "Debt (D)", "Equity (E)", "Include ΔNWC?", "Cash (final year)",
+            "Assumed Price MDKB (€)", "Total SPA Price (€)"
+        ],
+        "Value": [
+            f"€{EV:,.0f}", f"€{equity_value:,.0f}",
+            ("N/A" if np.isnan(IRR) else f"{IRR*100:.2f}%"),
+            f"{Re*100:.2f}%", f"{rd*100:.2f}%", f"{WACC*100:.2f}%",
+            f"{rf*100:.2f}%", f"{mrp*100:.2f}%", beta,
+            f"{tax*100:.2f}%", f"{g*100:.2f}%", f"{dep_pct*100:.2f}%",
+            f"{capex_pct*100:.2f}%", f"{nwc_pct*100:.2f}%",
+            f"€{D:,.0f}", f"€{E:,.0f}", "Yes" if use_nwc else "No",
+            f"€{cash:,.0f}", f"€{assumed_price_mdkb:,.0f}",
+            f"€{sum(a for _, a in base_instalments):,.0f}"
+        ]
+    })
+    df_summary.to_excel(writer, sheet_name="Summary", index=False)
+    df_results.to_excel(writer, sheet_name="DCF_Results", index=False)
+    df_sens.to_excel(writer, sheet_name="Sensitivity", index=True)
+    df_irr.to_excel(writer, sheet_name="IRR_Cashflows", index=False)
+excel_buffer.seek(0)
+
+if "Summary CSV" in option:
+    st.download_button(
+        label="Download Summary CSV",
+        data=df_results.to_csv(index=False).encode(),
+        file_name="PSS_Valuation_Summary.csv",
+        mime="text/csv"
+    )
+
+if "Sensitivity CSV" in option:
+    st.download_button(
+        label="Download Sensitivity CSV",
+        data=df_sens.to_csv().encode(),
+        file_name="PSS_Sensitivity_Matrix.csv",
+        mime="text/csv"
+    )
+
+if "IRR Cash Flows CSV" in option:
+    st.download_button(
+        label="Download IRR Cash Flows CSV",
+        data=df_irr.to_csv(index=False).encode(),
+        file_name="PSS_IRR_Cashflows.csv",
+        mime="text/csv"
+    )
+
+if "Excel (Full Report)" in option:
+    st.download_button(
+        label="Download Excel Report (with Assumptions)",
+        data=excel_buffer,
+        file_name=f"PSS_Valuation_Report_{dt.datetime.now().strftime('%Y%m%d')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+if "Chart (PNG)" in option:
+    import tempfile
+    tmpfile = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+    fig.savefig(tmpfile.name, dpi=150, bbox_inches="tight")
+    with open(tmpfile.name, "rb") as f:
+        st.download_button(
+            label="Download DCF Chart (PNG)",
+            data=f,
+            file_name="DCF_Chart.png",
+            mime="image/png"
+        )
