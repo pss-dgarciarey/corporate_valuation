@@ -2,7 +2,7 @@
 # Power Service Solutions GmbH — DCF + WACC Valuation App (Secure)
 # ===============================================================
 
-import os, json, datetime as dt
+import os, io, json, datetime as dt
 import numpy as np, pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
@@ -36,11 +36,7 @@ if not st.session_state["auth"]:
             st.success(f"Welcome, {user}!")
         else:
             st.error("Invalid credentials. Please try again.")
-        st.stop()
-
-if not st.session_state["auth"]:
     st.stop()
-
 
 # ------------------------
 # CONFIG
@@ -227,9 +223,17 @@ df_sens = pd.DataFrame(matrix, index=[f"{x*100:.1f}%" for x in wacc_range],
 st.dataframe(df_sens.style.format("€{:,.0f}"), use_container_width=True)
 
 # ------------------------
-# EXPORT
+# EXPORT OPTIONS
 # ------------------------
-if st.button("Export results"):
+st.markdown("### 📦 Export Options")
+st.info(
+    "Choose how to export your results:\n\n"
+    "- **Local Save (for VSCode/Desktop)**: creates a timestamped folder in your `results/` directory.\n"
+    "- **Browser Download**: lets you directly download CSV/Excel/chart files to your device."
+)
+
+# --- Option A: local export ---
+if st.button("💾 Export locally (for VSCode use)"):
     out = ts_folder(RESULTS_DIR)
     df_results.to_csv(os.path.join(out, "valuation_summary.csv"), index=False)
     df_sens.to_csv(os.path.join(out, "sensitivity_matrix.csv"))
@@ -243,4 +247,57 @@ if st.button("Export results"):
             "WACC": WACC, "fcf": fcfs, "pv_fcfs": pv_fcfs, "pv_tv": pv_tv
         }, f, indent=2)
     fig.savefig(os.path.join(out, "DCF_chart.png"), dpi=150, bbox_inches="tight")
-    st.success(f"✅ Exported all results to {out}")
+    st.success(f"✅ Exported locally to: {out}")
+
+# --- Option B: browser download ---
+st.markdown("#### ⬇️ Download files to your device")
+
+option = st.multiselect(
+    "Select what to download:",
+    ["Summary CSV", "Sensitivity CSV", "Excel (Full Report)", "Chart (PNG)"],
+    default=["Excel (Full Report)"]
+)
+
+# Prepare Excel buffer
+excel_buffer = io.BytesIO()
+with pd.ExcelWriter(excel_buffer, engine="xlsxwriter") as writer:
+    df_results.to_excel(writer, sheet_name="DCF_Results", index=False)
+    df_sens.to_excel(writer, sheet_name="Sensitivity", index=True)
+excel_buffer.seek(0)
+
+# Offer selected downloads
+if "Summary CSV" in option:
+    st.download_button(
+        label="Download Summary CSV",
+        data=df_results.to_csv(index=False).encode(),
+        file_name="PSS_Valuation_Summary.csv",
+        mime="text/csv"
+    )
+
+if "Sensitivity CSV" in option:
+    st.download_button(
+        label="Download Sensitivity CSV",
+        data=df_sens.to_csv().encode(),
+        file_name="PSS_Sensitivity_Matrix.csv",
+        mime="text/csv"
+    )
+
+if "Excel (Full Report)" in option:
+    st.download_button(
+        label="Download Excel Report",
+        data=excel_buffer,
+        file_name="PSS_Valuation_Report.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+if "Chart (PNG)" in option:
+    import tempfile
+    tmpfile = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+    fig.savefig(tmpfile.name, dpi=150, bbox_inches="tight")
+    with open(tmpfile.name, "rb") as f:
+        st.download_button(
+            label="Download DCF Chart (PNG)",
+            data=f,
+            file_name="DCF_Chart.png",
+            mime="image/png"
+        )
