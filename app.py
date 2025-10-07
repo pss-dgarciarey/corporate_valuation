@@ -120,6 +120,10 @@ def irr_bisection(cashflows, low=-0.9999, high=10.0, max_iter=200, tol=1e-8):
     return mid
 
 def adjust_instalments_absolute_deduction(base, deduction):
+    """
+    Adjust instalments by absolute deduction (tail-first). Ensures at least one
+    negative cash outflow exists for IRR calculation.
+    """
     total = sum(a for _, a in base)
     deduction = min(max(deduction, 0.0), total)
     remaining = deduction
@@ -130,6 +134,9 @@ def adjust_instalments_absolute_deduction(base, deduction):
         adjusted.append((year, -new_amt))
         remaining -= red
     adjusted.sort(key=lambda x: x[0])
+    # Ensure at least one negative outflow
+    if all(v == 0 for _, v in adjusted):
+        adjusted[0] = (adjusted[0][0], -1.0)
     return dict(adjusted), total
 
 # ------------------------
@@ -160,33 +167,33 @@ st.sidebar.header("Capital & Risk Assumptions")
 rf = st.sidebar.number_input("Risk-free rate (Rf)", value=0.027, step=0.001, format="%.4f")
 mrp = st.sidebar.number_input("Market risk premium (MRP)", value=0.04, step=0.001, format="%.4f")
 beta = st.sidebar.number_input("Equity beta (β)", value=1.2, step=0.05, format="%.2f")
-tax = st.sidebar.number_input("Tax rate (T)", value=0.30, step=0.01, format="%.2f", min_value=-1.0, max_value=1.0)
-g = st.sidebar.number_input("Terminal growth (g)", value=0.02, step=0.001, format="%.4f", min_value=-1.0, max_value=1.0)
+tax = st.sidebar.number_input("Tax rate (T)", value=0.30, step=0.01, format="%.2f")
+g = st.sidebar.number_input("Terminal growth (g)", value=0.02, step=0.001, format="%.4f")
 
 st.sidebar.markdown("---")
 st.sidebar.header("Operational Assumptions")
-dep_pct = st.sidebar.number_input("Depreciation % of Sales", value=0.01, step=0.001, format="%.4f", min_value=-1.0, max_value=1.0)
-capex_pct = st.sidebar.number_input("CapEx % of Sales", value=0.01, step=0.001, format="%.4f", min_value=-1.0, max_value=1.0)
+dep_pct = st.sidebar.number_input("Depreciation % of Sales", value=0.01, step=0.001, format="%.4f")
+capex_pct = st.sidebar.number_input("CapEx % of Sales", value=0.01, step=0.001, format="%.4f")
 use_nwc = st.sidebar.checkbox("Include ΔNWC adjustment", value=True)
 nwc_pct = 0.10
 if use_nwc:
-    nwc_pct = st.sidebar.number_input("ΔNWC % of ΔSales", value=0.10, step=0.005, format="%.4f", min_value=-1.0, max_value=1.0)
-sales_growth = st.sidebar.number_input("Sales growth for 2029", value=0.02, step=0.005, format="%.4f", min_value=-1.0, max_value=1.0)
+    nwc_pct = st.sidebar.number_input("ΔNWC % of ΔSales", value=0.10, step=0.005, format="%.4f")
+sales_growth = st.sidebar.number_input("Sales growth for 2029", value=0.02, step=0.005, format="%.4f")
 
 st.sidebar.markdown("---")
 st.sidebar.header("Debt & Financing")
-debt_amount = st.sidebar.number_input("Debt (€)", value=0.0, step=1_000_000.0, format="%.2f", min_value=-1e9, max_value=1e9)
-rd = st.sidebar.number_input("Cost of Debt (Rd)", value=0.04, step=0.005, format="%.4f", min_value=-1.0, max_value=1.0)
+debt_amount = st.sidebar.number_input("Debt (€)", value=0.0, step=1_000_000.0, format="%.2f")
+rd = st.sidebar.number_input("Cost of Debt (Rd)", value=0.04, step=0.005, format="%.4f")
 
 st.sidebar.markdown("---")
 st.sidebar.header("Acquisition & IRR Settings")
 assumed_price_mdkb = st.sidebar.number_input(
     "Assumed Price for MDKB (€)",
-    value=0.0, step=100_000.0, format="%.0f", min_value=0.0, max_value=1e9
+    value=0.0, step=100_000.0, format="%.0f"
 )
 
 # ------------------------
-# CALCULATIONS (DCF)
+# DCF CALCULATIONS
 # ------------------------
 E = df_base["Equity_kEUR"].iloc[-1] * 1000
 D = debt_amount
@@ -195,6 +202,7 @@ WACC = compute_wacc(E, D, Re, rd, tax)
 
 sales_eur = df_base["Sales_kEUR"].values * 1000
 ebit_eur  = df_base["EBIT_kEUR"].values * 1000
+net_eur   = df_base["Net_kEUR"].values * 1000
 
 fcfs = []
 for i, y in enumerate(years):
@@ -217,62 +225,6 @@ EV = sum(pv_fcfs) + pv_tv
 equity_value = EV + cash - D
 
 # ------------------------
-# IRR SECTION
-# ------------------------
-st.subheader("💰 Internal Rate of Return (IRR) Analysis")
-
-base_instalments = [(2025, 500_000), (2026, 2_500_000), (2027, 3_500_000), (2028, 6_800_000)]
-adjusted_outflows, total_purchase_price = adjust_instalments_absolute_deduction(
-    base_instalments, deduction=assumed_price_mdkb
-)
-
-# --- IRR 1: Based on FCF
-irr_cash_flows = []
-irr_rows = []
-for i, y in enumerate(years):
-    instal = adjusted_outflows.get(y, 0.0)
-    inflow = fcfs[i] + (tv if y == 2029 and not np.isnan(tv) else 0.0)
-    net_cf = instal + inflow
-    irr_cash_flows.append(net_cf)
-    irr_rows.append([y, instal, fcfs[i], (tv if y == 2029 and not np.isnan(tv) else 0.0), net_cf])
-IRR_fcf = irr_bisection(irr_cash_flows)
-
-# --- IRR 2: Based on Net Profit
-net_eur = df_base["Net_kEUR"].values * 1000
-irr_cash_flows_net = []
-irr_rows_net = []
-for i, y in enumerate(years):
-    instal = adjusted_outflows.get(y, 0.0)
-    inflow = net_eur[i] + (tv if y == 2029 and not np.isnan(tv) else 0.0)
-    net_cf = instal + inflow
-    irr_cash_flows_net.append(net_cf)
-    irr_rows_net.append([y, instal, net_eur[i], (tv if y == 2029 and not np.isnan(tv) else 0.0), net_cf])
-IRR_net = irr_bisection(irr_cash_flows_net)
-
-# --- Display IRRs side by side
-col1, col2 = st.columns(2)
-col1.metric("IRR (FCF-based)", f"{IRR_fcf*100:.2f}%" if not np.isnan(IRR_fcf) else "N/A")
-col2.metric("IRR (Net Profit-based)", f"{IRR_net*100:.2f}%" if not np.isnan(IRR_net) else "N/A")
-
-# --- Bar chart comparison
-fig_irr = plt.figure(figsize=(5.5, 4))
-plt.bar(["FCF-based", "Net Profit-based"], [IRR_fcf*100, IRR_net*100], color=["#0073e6", "#00b386"])
-plt.ylabel("IRR (%)")
-plt.title("IRR Comparison")
-for i, val in enumerate([IRR_fcf*100, IRR_net*100]):
-    plt.text(i, val + 0.5, f"{val:.2f}%", ha="center", fontsize=10)
-st.pyplot(fig_irr)
-
-# --- IRR Cash Flow Tables
-st.markdown("#### IRR Cash Flows (FCF-based)")
-df_irr = pd.DataFrame(irr_rows, columns=["Year","Instalment (outflow)","FCF (inflow)","Terminal Value (inflow)","Net CF for IRR"])
-st.dataframe(df_irr.style.format("€{:,.0f}"), use_container_width=True)
-
-st.markdown("#### IRR Cash Flows (Net Profit-based)")
-df_irr_net = pd.DataFrame(irr_rows_net, columns=["Year","Instalment (outflow)","Net Profit (inflow)","Terminal Value (inflow)","Net CF for IRR"])
-st.dataframe(df_irr_net.style.format("€{:,.0f}"), use_container_width=True)
-
-# ------------------------
 # METRICS DISPLAY
 # ------------------------
 c1, c2, c3, c4, c5 = st.columns(5)
@@ -283,7 +235,7 @@ c4.metric("Enterprise Value (EV)", f"€{EV:,.0f}")
 c5.metric("Equity Value", f"€{equity_value:,.0f}")
 
 # ------------------------
-# TABLES & CHARTS
+# TABLES & DCF GRAPH
 # ------------------------
 df_results = pd.DataFrame({
     "Year": years,
@@ -296,7 +248,6 @@ df_results = pd.DataFrame({
 st.subheader("DCF Inputs & Results (FY 2025–2029)")
 st.dataframe(df_results.style.format("€{:,.0f}"), use_container_width=True)
 
-# FCF Chart
 fig = plt.figure(figsize=(9, 4.5))
 plt.plot(years, fcfs, "o-", label="FCF (€)")
 plt.plot(years, pv_fcfs, "o-", label="PV(FCF)")
@@ -306,6 +257,48 @@ plt.title("Free Cash Flow and Present Value (FY 2025–2029)")
 plt.xlabel("Year")
 plt.ylabel("EUR")
 st.pyplot(fig)
+
+# ------------------------
+# IRR SECTION (after valuation graph)
+# ------------------------
+st.subheader("💰 Internal Rate of Return (IRR) Analysis")
+
+base_instalments = [(2025, 500_000), (2026, 2_500_000), (2027, 3_500_000), (2028, 6_800_000)]
+adjusted_outflows, total_purchase_price = adjust_instalments_absolute_deduction(base_instalments, assumed_price_mdkb)
+
+# --- IRR 1: FCF-based
+irr_cash_flows = []
+irr_rows = []
+for i, y in enumerate(years):
+    instal = adjusted_outflows.get(y, 0.0)
+    inflow = fcfs[i] + (tv if y == 2029 and not np.isnan(tv) else 0)
+    net_cf = instal + inflow
+    irr_cash_flows.append(net_cf)
+    irr_rows.append([y, instal, fcfs[i], (tv if y == 2029 else 0), net_cf])
+IRR_fcf = irr_bisection(irr_cash_flows)
+
+# --- IRR 2: Net Profit-based
+irr_cash_flows_net = []
+irr_rows_net = []
+for i, y in enumerate(years):
+    instal = adjusted_outflows.get(y, 0.0)
+    inflow = net_eur[i] + (tv if y == 2029 and not np.isnan(tv) else 0)
+    net_cf = instal + inflow
+    irr_cash_flows_net.append(net_cf)
+    irr_rows_net.append([y, instal, net_eur[i], (tv if y == 2029 else 0), net_cf])
+IRR_net = irr_bisection(irr_cash_flows_net)
+
+col1, col2 = st.columns(2)
+col1.metric("IRR (FCF-based)", f"{IRR_fcf*100:.2f}%" if not np.isnan(IRR_fcf) else "N/A")
+col2.metric("IRR (Net Profit-based)", f"{IRR_net*100:.2f}%" if not np.isnan(IRR_net) else "N/A")
+
+fig_irr = plt.figure(figsize=(5.5, 4))
+plt.bar(["FCF-based", "Net Profit-based"], [IRR_fcf*100, IRR_net*100], color=["#0073e6", "#00b386"])
+plt.ylabel("IRR (%)")
+plt.title("IRR Comparison")
+for i, val in enumerate([IRR_fcf*100, IRR_net*100]):
+    plt.text(i, val + 0.5, f"{val:.2f}%", ha="center", fontsize=10)
+st.pyplot(fig_irr)
 
 # ------------------------
 # SENSITIVITY MATRIX
@@ -318,7 +311,7 @@ for w in wacc_range:
     row = []
     for gg in g_range:
         tv_test = fcfs[-1] * (1 + gg) / (w - gg) if w > gg else np.nan
-        ev_test = sum(pv(fcfs, w)) + (tv_test / ((1 + w) ** len(fcfs)) if not np.isnan(tv_test) else 0.0)
+        ev_test = sum(pv(fcfs, w)) + (tv_test / ((1 + w) ** len(fcfs)) if not np.isnan(tv_test) else 0)
         row.append(ev_test)
     matrix.append(row)
 df_sens = pd.DataFrame(matrix, index=[f"{x*100:.1f}%" for x in wacc_range],
@@ -326,68 +319,24 @@ df_sens = pd.DataFrame(matrix, index=[f"{x*100:.1f}%" for x in wacc_range],
 st.dataframe(df_sens.style.format("€{:,.0f}"), use_container_width=True)
 
 # ------------------------
-# EXPORT OPTIONS
+# EXPORT
 # ------------------------
 st.markdown("### 📦 Export Options")
-st.info(
-    "Choose how to export your results:\n\n"
-    "- **Local Save**: creates a timestamped folder under `results/`\n"
-    "- **Browser Download**: generates downloadable files directly."
-)
+st.info("Choose how to export your results to local folder or browser.")
 
 if st.button("💾 Export locally"):
     out = ts_folder(RESULTS_DIR)
     df_results.to_csv(os.path.join(out, "valuation_summary.csv"), index=False)
     df_sens.to_csv(os.path.join(out, "sensitivity_matrix.csv"))
-    df_irr.to_csv(os.path.join(out, "irr_cashflows_fcf.csv"), index=False)
-    df_irr_net.to_csv(os.path.join(out, "irr_cashflows_net.csv"), index=False)
     with open(os.path.join(out, "assumptions.json"), "w") as f:
         json.dump({
-            "rf": rf, "mrp": mrp, "beta": beta, "Re": Re, "Rd": rd, "tax": tax, "g": g,
-            "dep_pct": dep_pct, "capex_pct": capex_pct, "use_nwc": use_nwc, "nwc_pct": nwc_pct,
-            "debt": D, "EV": EV, "EquityValue": equity_value, "WACC": WACC,
-            "fcf": fcfs, "pv_fcfs": pv_fcfs, "tv": tv, "pv_tv": pv_tv,
-            "IRR_FCF": IRR_fcf, "IRR_NetProfit": IRR_net,
-            "assumed_price_mdkb": assumed_price_mdkb, "adjusted_instalments": adjusted_outflows
+            "rf": rf, "mrp": mrp, "beta": beta, "Re": Re, "Rd": rd, "tax": tax,
+            "g": g, "dep_pct": dep_pct, "capex_pct": capex_pct, "use_nwc": use_nwc,
+            "nwc_pct": nwc_pct, "debt": D, "EV": EV, "EquityValue": equity_value,
+            "WACC": WACC, "fcf": fcfs, "pv_fcfs": pv_fcfs, "tv": tv,
+            "pv_tv": pv_tv, "IRR_FCF": IRR_fcf, "IRR_NetProfit": IRR_net,
+            "assumed_price_mdkb": assumed_price_mdkb
         }, f, indent=2)
-    fig.savefig(os.path.join(out, "DCF_chart.png"), dpi=150, bbox_inches="tight")
-    fig_irr.savefig(os.path.join(out, "IRR_chart.png"), dpi=150, bbox_inches="tight")
+    fig.savefig(os.path.join(out, "DCF_chart.png"), dpi=150)
+    fig_irr.savefig(os.path.join(out, "IRR_chart.png"), dpi=150)
     st.success(f"✅ Exported locally to: {out}")
-
-# Browser export
-st.markdown("#### ⬇️ Download files to your device")
-option = st.multiselect(
-    "Select what to download:",
-    ["Summary CSV", "Sensitivity CSV", "IRR FCF CSV", "IRR Net CSV", "Excel (Full Report)", "Charts (PNG)"],
-    default=["Excel (Full Report)"]
-)
-
-excel_buffer = io.BytesIO()
-with pd.ExcelWriter(excel_buffer, engine="xlsxwriter") as writer:
-    df_results.to_excel(writer, sheet_name="DCF_Results", index=False)
-    df_sens.to_excel(writer, sheet_name="Sensitivity", index=True)
-    df_irr.to_excel(writer, sheet_name="IRR_FCF", index=False)
-    df_irr_net.to_excel(writer, sheet_name="IRR_NetProfit", index=False)
-    pd.DataFrame({
-        "Metric": ["EV", "Equity Value", "IRR (FCF)", "IRR (Net Profit)", "WACC", "Re", "Rd"],
-        "Value": [EV, equity_value, IRR_fcf, IRR_net, WACC, Re, rd]
-    }).to_excel(writer, sheet_name="Summary", index=False)
-excel_buffer.seek(0)
-
-if "Excel (Full Report)" in option:
-    st.download_button(
-        label="Download Excel Report",
-        data=excel_buffer,
-        file_name=f"PSS_Valuation_Report_{dt.datetime.now().strftime('%Y%m%d')}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-
-if "Charts (PNG)" in option:
-    import tempfile
-    tmpfile1 = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
-    fig.savefig(tmpfile1.name, dpi=150, bbox_inches="tight")
-    tmpfile2 = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
-    fig_irr.savefig(tmpfile2.name, dpi=150, bbox_inches="tight")
-    with open(tmpfile1.name, "rb") as f1, open(tmpfile2.name, "rb") as f2:
-        st.download_button("Download DCF Chart (PNG)", data=f1, file_name="DCF_Chart.png", mime="image/png")
-        st.download_button("Download IRR Chart (PNG)", data=f2, file_name="IRR_Chart.png", mime="image/png")
