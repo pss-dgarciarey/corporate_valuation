@@ -1,4 +1,4 @@
-# ===============================================================
+# =============================================================== 
 # Power Service Solutions GmbH — DCF + WACC Valuation App (Secure)
 # ===============================================================
 
@@ -73,8 +73,8 @@ data = {
     "EBIT_kEUR":  [600, 2106, 5237, 7456, 7641],
     "Net_kEUR":   [535, 2135, 4845, 5218, 5322],
     "Equity_kEUR":[12596, 14731, 19219, 24750, 25850],
-    "Cash_kEUR":  [8176, 11205, 20394, 28367, 36000],
-    "FCF_kEUR":   [-6884, 2749, 9054, 7716, 5322],
+    "Cash_kEUR":  [8176, 11205, 20394, 28367, 36000],  # manual 2029 used
+    "FCF_kEUR":   [-6884, 2749, 9054, 7716, 5322],      # manual 2029 used
 }
 df_base = pd.DataFrame(data, index=years)
 
@@ -119,26 +119,26 @@ st.dataframe(
 # SIDEBAR INPUTS
 # ------------------------
 st.sidebar.header("Capital & Risk Assumptions")
-rf = st.sidebar.number_input("Risk-free rate (Rf)", value=0.027, step=0.001)
-mrp = st.sidebar.number_input("Market risk premium (MRP)", value=0.04, step=0.001)
-beta = st.sidebar.number_input("Equity beta (β)", value=1.2, step=0.05)
-tax = st.sidebar.number_input("Tax rate (T)", value=0.30, step=0.01)
-g = st.sidebar.number_input("Terminal growth (g)", value=0.02, step=0.001)
+rf = st.sidebar.number_input("Risk-free rate (Rf)", value=0.027, step=0.001, format="%.4f")
+mrp = st.sidebar.number_input("Market risk premium (MRP)", value=0.04, step=0.001, format="%.4f")
+beta = st.sidebar.number_input("Equity beta (β)", value=1.2, step=0.05, format="%.2f")
+tax = st.sidebar.number_input("Tax rate (T)", value=0.30, step=0.01, format="%.2f", min_value=-1.0, max_value=1.0)
+g = st.sidebar.number_input("Terminal growth (g)", value=0.02, step=0.001, format="%.4f", min_value=-1.0, max_value=1.0)
 
 st.sidebar.markdown("---")
 st.sidebar.header("Operational Assumptions")
-dep_pct = st.sidebar.number_input("Depreciation % of Sales", value=0.01, step=0.001)
-capex_pct = st.sidebar.number_input("CapEx % of Sales", value=0.01, step=0.001)
+dep_pct = st.sidebar.number_input("Depreciation % of Sales", value=0.01, step=0.001, format="%.4f", min_value=-1.0, max_value=1.0)
+capex_pct = st.sidebar.number_input("CapEx % of Sales", value=0.01, step=0.001, format="%.4f", min_value=-1.0, max_value=1.0)
 use_nwc = st.sidebar.checkbox("Include ΔNWC adjustment", value=True)
 nwc_pct = 0.03
 if use_nwc:
-    nwc_pct = st.sidebar.number_input("ΔNWC % of ΔSales", value=0.03, step=0.005)
-sales_growth = st.sidebar.number_input("Sales growth for 2029", value=0.02, step=0.005)
+    nwc_pct = st.sidebar.number_input("ΔNWC % of ΔSales", value=0.03, step=0.005, format="%.4f", min_value=-1.0, max_value=1.0)
+sales_growth = st.sidebar.number_input("Sales growth for 2029", value=0.02, step=0.005, format="%.4f", min_value=-1.0, max_value=1.0)
 
 st.sidebar.markdown("---")
 st.sidebar.header("Debt & Financing")
-debt_amount = st.sidebar.number_input("Debt (€)", value=0.0, step=1_000_000.0)
-rd = st.sidebar.number_input("Cost of Debt (Rd)", value=0.04, step=0.005)
+debt_amount = st.sidebar.number_input("Debt (€)", value=0.0, step=1_000_000.0, format="%.2f", min_value=-1e9, max_value=1e9)
+rd = st.sidebar.number_input("Cost of Debt (Rd)", value=0.04, step=0.005, format="%.4f", min_value=-1.0, max_value=1.0)
 
 # ------------------------
 # CALCULATIONS
@@ -159,14 +159,23 @@ for i, y in enumerate(years):
     dep = s * dep_pct
     capex = s * capex_pct
     dNWC = (s - prev_s) * nwc_pct if (use_nwc and i > 0) else 0
+
     fcf = (e * (1 - tax)) + dep - capex - dNWC
+
+    # --- manual override for 2029 FCF ---
+    if y == 2029:
+        fcf = df_base.loc[y, "FCF_kEUR"] * 1000
+
     fcfs.append(fcf)
 
+# --- override for cash (final year) ---
+cash = df_base.loc[2029, "Cash_kEUR"] * 1000
+
+# --- DCF ---
 pv_fcfs = pv(fcfs, WACC)
 tv = fcfs[-1] * (1 + g) / (WACC - g) if WACC > g else np.nan
 pv_tv = tv / ((1 + WACC) ** len(fcfs)) if not np.isnan(tv) else 0
 EV = sum(pv_fcfs) + pv_tv
-cash = df_base["Cash_kEUR"].iloc[-1] * 1000
 equity_value = EV + cash - D
 
 # ------------------------
@@ -240,7 +249,6 @@ st.info(
     "- **Browser Download**: generates downloadable files directly from your browser."
 )
 
-# Local export
 if st.button("💾 Export locally"):
     out = ts_folder(RESULTS_DIR)
     df_results.to_csv(os.path.join(out, "valuation_summary.csv"), index=False)
@@ -265,7 +273,6 @@ option = st.multiselect(
     default=["Excel (Full Report)"]
 )
 
-# Excel report (with assumptions and results)
 excel_buffer = io.BytesIO()
 with pd.ExcelWriter(excel_buffer, engine="xlsxwriter") as writer:
     df_summary = pd.DataFrame({
