@@ -19,6 +19,7 @@ USERS = {
     os.getenv("USER4"): os.getenv("USER4_PWD"),
     os.getenv("USER5"): os.getenv("USER5_PWD"),
     os.getenv("USER6"): os.getenv("USER6_PWD"),
+    os.getenv("USER7"): os.getenv("USER7_PWD"),
 }
 USER_NAMES = {
     "d.garcia": "Daniel Garcia Rey",
@@ -27,6 +28,7 @@ USER_NAMES = {
     "m.peter": "Michel Peter",
     "c.bahn": "Cristoph Bahn",
     "tgv": "Tomas Garcia Villanueva",
+    "l.thai": "Laura Thai"
 }
 
 if "auth" not in st.session_state:
