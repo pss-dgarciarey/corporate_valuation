@@ -113,33 +113,37 @@ company = st.sidebar.selectbox("**Select Company**", ["PSS", "MDKB"])
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### **Capital & Risk Assumptions**")
-rf=st.sidebar.number_input("Risk-free rate",value=0.027,step=0.001)
-mrp=st.sidebar.number_input("Market risk premium",value=0.04,step=0.001)
-beta=st.sidebar.number_input("Beta",value=1.2,step=0.05)
-tax=st.sidebar.number_input("Tax rate",value=0.30,step=0.01)
-g=st.sidebar.number_input("Terminal growth (g)",value=0.02,step=0.001)
+rf   = st.sidebar.number_input("Risk-free rate",        value=0.027, step=0.001, format="%.3f")
+mrp  = st.sidebar.number_input("Market risk premium",   value=0.040, step=0.001, format="%.3f")
+beta = st.sidebar.number_input("Beta",                  value=1.200, step=0.001, format="%.3f")
+tax  = st.sidebar.number_input("Tax rate",              value=0.300, step=0.001, format="%.3f")
+g    = st.sidebar.number_input("Terminal growth (g)",   value=0.020, step=0.001, format="%.3f")
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### **Operational Assumptions**")
-dep_pct=st.sidebar.number_input("Depreciation % of Sales",value=0.01,step=0.001)
-capex_pct=st.sidebar.number_input("CapEx % of Sales",value=0.01,step=0.001)
-use_nwc=st.sidebar.checkbox("Include ΔNWC adjustment",value=True)
-default_nwc=-0.41 if company=="MDKB" else 0.10
-nwc_pct=st.sidebar.number_input("ΔNWC % of ΔSales",value=float(default_nwc),step=0.01)
-mdkb_extend_growth=st.sidebar.number_input("MDKB 2029 growth",value=0.02,step=0.005)
+dep_pct   = st.sidebar.number_input("Depreciation % of Sales", value=0.010, step=0.001, format="%.3f")
+capex_pct = st.sidebar.number_input("CapEx % of Sales",        value=0.010, step=0.001, format="%.3f")
+use_nwc   = st.sidebar.checkbox("Include ΔNWC adjustment", value=True)
+default_nwc = -0.410 if company=="MDKB" else 0.100
+nwc_pct   = st.sidebar.number_input("ΔNWC % of ΔSales", value=float(default_nwc), step=0.001, format="%.3f")
+mdkb_extend_growth = st.sidebar.number_input("MDKB 2029 growth", value=0.020, step=0.001, format="%.3f")
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### **Debt & Financing**")
-debt=st.sidebar.number_input("Debt (€)",value=0.0,step=1_000_000.0)
-rd=st.sidebar.number_input("Cost of Debt (Rd)",value=0.04,step=0.005)
+debt = st.sidebar.number_input("Debt (€)", value=0.0, step=1_000_000.0)
+rd   = st.sidebar.number_input("Cost of Debt (Rd)", value=0.040, step=0.001, format="%.3f")
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### **Acquisition & IRR Settings**")
-assumed_price_mdkb=st.sidebar.number_input("Assumed Price for MDKB (€)",value=0.0,step=100_000.0)
+assumed_price_mdkb = st.sidebar.number_input("Assumed Price for MDKB (€)", value=0.0, step=100_000.0)
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### **FCF Source**")
-fcf_source=st.sidebar.radio("Choose FCF model:",["Computed (from EBIT, Dep%, CapEx%, ΔNWC)","Table (provided FCF, adjusted by drivers)"],index=0 if company=="PSS" else 1)
+fcf_source = st.sidebar.radio(
+    "Choose FCF model:",
+    ["Computed (from EBIT, Dep%, CapEx%, ΔNWC)","Table (provided FCF, adjusted by drivers)"],
+    index=0 if company=="PSS" else 1
+)
 
 # ------------------------
 # DATA PREP
@@ -241,7 +245,7 @@ st.dataframe(dfres.style.format({c:"€{:,.0f}" for c in dfres.columns if c!="Ye
 
 fig=plt.figure(figsize=(9,4.5))
 plt.plot(years,fcfs,"o-",label="FCF");plt.plot(years,pv_fcfs,"o-",label="PV(FCF)")
-plt.axhline(0,color="gray",lw=.8);plt.legend();plt.title(f"Free Cash Flow — {company}")
+plt.axhline(0,linewidth=.8);plt.legend();plt.title(f"Free Cash Flow — {company}")
 st.pyplot(fig)
 
 # ------------------------
