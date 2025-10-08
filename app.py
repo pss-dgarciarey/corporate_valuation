@@ -109,21 +109,37 @@ def adjust_instalments_absolute_deduction(base,ded):
 # ------------------------
 # SIDEBAR
 # ------------------------
-company=st.sidebar.selectbox("Select Company",["PSS","MDKB"])
-rf=st.sidebar.number_input("Risk-free rate",value=0.027,step=0.001)
-mrp=st.sidebar.number_input("Market risk premium",value=0.04,step=0.001)
-beta=st.sidebar.number_input("Beta",value=1.2,step=0.05)
-tax=st.sidebar.number_input("Tax rate",value=0.30,step=0.01)
-g=st.sidebar.number_input("Terminal growth (g)",value=0.02,step=0.001)
-dep_pct=st.sidebar.number_input("Depreciation % of Sales",value=0.01,step=0.001)
-capex_pct=st.sidebar.number_input("CapEx % of Sales",value=0.01,step=0.001)
-use_nwc=st.sidebar.checkbox("Include ΔNWC (if no FCF)",value=True)
-default_nwc=-0.41 if company=="MDKB" else 0.10
-nwc_pct=st.sidebar.number_input("ΔNWC % of ΔSales",value=float(default_nwc),step=0.01)
-mdkb_extend_growth=st.sidebar.number_input("MDKB 2029 growth (Sales & FCF)",value=0.02,step=0.005)
-debt=st.sidebar.number_input("Debt (€)",value=0.0,step=1_000_000.0)
-rd=st.sidebar.number_input("Cost of Debt Rd",value=0.04,step=0.005)
-assumed_price_mdkb=st.sidebar.number_input("Assumed Price for MDKB (€)",value=0.0,step=100_000.0)
+# ------------------------
+# SIDEBAR (grouped + bold)
+# ------------------------
+st.sidebar.markdown("### **Company Selection**")
+company = st.sidebar.selectbox("**Select Company**", ["PSS", "MDKB"])
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("### **Capital & Risk Assumptions**")
+rf = st.sidebar.number_input("Risk-free rate (Rf)", value=0.027, step=0.001)
+mrp = st.sidebar.number_input("Market risk premium (MRP)", value=0.04, step=0.001)
+beta = st.sidebar.number_input("Equity beta (β)", value=1.2, step=0.05)
+tax = st.sidebar.number_input("Tax rate (T)", value=0.30, step=0.01)
+g = st.sidebar.number_input("Terminal growth (g)", value=0.02, step=0.001)
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("### **Operational Assumptions**")
+dep_pct = st.sidebar.number_input("Depreciation % of Sales", value=0.01, step=0.001)
+capex_pct = st.sidebar.number_input("CapEx % of Sales", value=0.01, step=0.001)
+use_nwc = st.sidebar.checkbox("Include ΔNWC adjustment (if no FCF)", value=True)
+default_nwc = -0.41 if company == "MDKB" else 0.10
+nwc_pct = st.sidebar.number_input("ΔNWC % of ΔSales", value=float(default_nwc), step=0.01)
+mdkb_extend_growth = st.sidebar.number_input("MDKB 2029 growth (Sales & FCF)", value=0.02, step=0.005)
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("### **Debt & Financing**")
+debt = st.sidebar.number_input("Debt (€)", value=0.0, step=1_000_000.0)
+rd = st.sidebar.number_input("Cost of Debt (Rd)", value=0.04, step=0.005)
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("### **Acquisition & IRR Settings**")
+assumed_price_mdkb = st.sidebar.number_input("Assumed Price for MDKB (€)", value=0.0, step=100_000.0)
 
 # ------------------------
 # BUILD DATA
