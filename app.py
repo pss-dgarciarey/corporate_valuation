@@ -1,5 +1,5 @@
 # ===============================================================
-# Multi-Company DCF + WACC Valuation App (PSS & MDKB) — Secure
+# Multi-Company DCF + WACC Valuation App (PSS & MDKB)
 # ===============================================================
 
 import os, io, json, datetime as dt
@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 from dotenv import load_dotenv
 
 # ------------------------
-# LOAD SECRETS / ENV
+# LOGIN
 # ------------------------
 load_dotenv()
 USERS = {
@@ -17,21 +17,14 @@ USERS = {
     os.getenv("USER2"): os.getenv("USER2_PWD"),
     os.getenv("USER3"): os.getenv("USER3_PWD"),
     os.getenv("USER4"): os.getenv("USER4_PWD"),
-    os.getenv("USER5"): os.getenv("USER5_PWD"),
-    os.getenv("USER6"): os.getenv("USER6_PWD"),
 }
 USER_NAMES = {
     "d.garcia": "Daniel Garcia Rey",
     "t.held": "Thomas Held",
     "b.arrieta": "Borja Arrieta",
     "m.peter": "Michel Peter",
-    "c.bahn": "Cristoph Bahn",
-    "tgv": "Tomas Garcia Villanueva",
 }
 
-# ------------------------
-# SIMPLE LOGIN
-# ------------------------
 if "auth" not in st.session_state:
     st.session_state["auth"] = False
 if not st.session_state["auth"]:
@@ -42,9 +35,7 @@ if not st.session_state["auth"]:
         if user in USERS and pwd == USERS[user]:
             st.session_state["auth"] = True
             st.session_state["user"] = user
-            name = USER_NAMES.get(user, user)
-            welcome = "Thomas" if user == "t.held" else name.split()[0]
-            st.success(f"Welcome back, {welcome}!")
+            st.success(f"Welcome back {USER_NAMES.get(user, user).split()[0]}!")
         else:
             st.error("Invalid credentials.")
     st.stop()
@@ -52,18 +43,20 @@ if not st.session_state["auth"]:
 # ------------------------
 # CONFIG
 # ------------------------
-st.set_page_config(page_title="PSS / MDKB Valuation", layout="wide")
+st.set_page_config(page_title="PSS & MDKB Valuation", layout="wide")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 RESULTS_DIR = os.path.join(BASE_DIR, "results")
 os.makedirs(RESULTS_DIR, exist_ok=True)
+
 def ts_folder(root):
     path = os.path.join(root, dt.datetime.now().strftime("%Y-%m-%d_%H%M%S"))
     os.makedirs(path, exist_ok=True)
     return path
 
 # ------------------------
-# PSS base data (kEUR)
+# DATASETS
 # ------------------------
+# --- PSS (kEUR)
 years_pss = [2025, 2026, 2027, 2028, 2029]
 df_pss = pd.DataFrame({
     "Sales_kEUR": [55650, 92408, 113161, 120765, 123180],
@@ -74,20 +67,19 @@ df_pss = pd.DataFrame({
     "FCF_kEUR":   [-6884, 2749, 9054, 7716, 5322],
 }, index=years_pss)
 
-# ------------------------
-# MDKB base data (EUR m → kEUR)
-# ------------------------
-sales_m_25_28 = [13.7, 11.7, 12.0, 12.3]   # corrected
-ebit_m_25_28  = [0.8, 0.9, 1.0, 1.0]
-net_m_25_28   = [0.6, 0.7, 0.7, 0.7]
-fcf_m_25_28   = [-0.7, 0.3, 0.4, 0.4]      # corrected
-cash_m_25_28  = [2.2, 2.5, 2.9, 3.3]
+# --- MDKB (EUR m → kEUR)
+sales_m_25_28 = [13.7, 11.7, 12.0, 12.3]
+ebit_m_25_28  = [0.8,  0.9,  1.0,  1.0]
+net_m_25_28   = [0.6,  0.7,  0.7,  0.7]
+fcf_m_25_28   = [-0.7, 0.3, 0.4, 0.4]
+cash_m_25_28  = [2.2,  2.5,  2.9,  3.3]
 equity_m_25_29 = [12.1, 12.6, 13.3, 14.0, 14.6]
-nwc_m_25_29    = [5.5, 6.4, 6.4, 6.3, 6.2]
-def m_to_k(x): return [int(round(v*1000)) for v in x]
+nwc_m_25_29    = [5.5,  6.4,  6.4,  6.3,  6.2]
+
+def m_to_k(seq): return [int(round(v*1000)) for v in seq]
 
 # ------------------------
-# UTILS
+# FUNCTIONS
 # ------------------------
 def capm_cost_equity(rf,mrp,b): return rf+b*mrp
 def compute_wacc(E,D,Re,Rd,t): return (E/(E+D))*Re+(D/(E+D))*Rd*(1-t) if (E+D)>0 else Re
@@ -115,13 +107,6 @@ def adjust_instalments_absolute_deduction(base,ded):
     return dict(sorted(adj)),total
 
 # ------------------------
-# UI header
-# ------------------------
-user=st.session_state["user"]
-st.title("💼 Corporate Valuation — DCF & WACC")
-st.caption(f"Logged in as **{USER_NAMES.get(user,user)}** — {dt.datetime.now():%H:%M}")
-
-# ------------------------
 # SIDEBAR
 # ------------------------
 company=st.sidebar.selectbox("Select Company",["PSS","MDKB"])
@@ -129,11 +114,11 @@ rf=st.sidebar.number_input("Risk-free rate",value=0.027,step=0.001)
 mrp=st.sidebar.number_input("Market risk premium",value=0.04,step=0.001)
 beta=st.sidebar.number_input("Beta",value=1.2,step=0.05)
 tax=st.sidebar.number_input("Tax rate",value=0.30,step=0.01)
-g=st.sidebar.number_input("Terminal growth g",value=0.02,step=0.001)
+g=st.sidebar.number_input("Terminal growth (g)",value=0.02,step=0.001)
 dep_pct=st.sidebar.number_input("Depreciation % of Sales",value=0.01,step=0.001)
 capex_pct=st.sidebar.number_input("CapEx % of Sales",value=0.01,step=0.001)
+use_nwc=st.sidebar.checkbox("Include ΔNWC (if no FCF)",value=True)
 default_nwc=-0.41 if company=="MDKB" else 0.10
-use_nwc=st.sidebar.checkbox("Include ΔNWC adjustment (if no FCF)",value=True)
 nwc_pct=st.sidebar.number_input("ΔNWC % of ΔSales",value=float(default_nwc),step=0.01)
 mdkb_extend_growth=st.sidebar.number_input("MDKB 2029 growth (Sales & FCF)",value=0.02,step=0.005)
 debt=st.sidebar.number_input("Debt (€)",value=0.0,step=1_000_000.0)
@@ -141,7 +126,7 @@ rd=st.sidebar.number_input("Cost of Debt Rd",value=0.04,step=0.005)
 assumed_price_mdkb=st.sidebar.number_input("Assumed Price for MDKB (€)",value=0.0,step=100_000.0)
 
 # ------------------------
-# BUILD DATAFRAME
+# BUILD DATA
 # ------------------------
 if company=="PSS":
     df=df_pss.copy();title="Power Service Solutions GmbH (PSS)"
@@ -183,14 +168,22 @@ EV=sum(pv_fcfs)+pv_tv;EqV=EV+cash-D
 # ------------------------
 st.subheader(f"Key Lines ({years[0]}–{years[-1]}) — {title}")
 disp=df.copy();disp.insert(0,"Year",[str(y) for y in years])
-st.dataframe(disp.style.format({c:"{:,.0f}" for c in disp.columns if c.endswith("_kEUR")}),use_container_width=True)
+st.dataframe(
+    disp.style.format({c:"{:,.0f}" for c in disp.columns if c.endswith("_kEUR")}),
+    use_container_width=True
+)
 c1,c2,c3,c4,c5=st.columns(5)
-c1.metric("Re",f"{Re*100:.2f}%");c2.metric("Rd",f"{rd*100:.2f}%");c3.metric("WACC",f"{WACC*100:.2f}%")
-c4.metric("EV",f"€{EV:,.0f}");c5.metric("Equity Value",f"€{EqV:,.0f}")
+c1.metric("Re",f"{Re*100:.2f}%");c2.metric("Rd",f"{rd*100:.2f}%")
+c3.metric("WACC",f"{WACC*100:.2f}%");c4.metric("EV",f"€{EV:,.0f}");c5.metric("Equity",f"€{EqV:,.0f}")
 
-dfres=pd.DataFrame({"Year":[str(y) for y in years],
-    "Sales (€)":sales,"EBIT (€)":ebit,"Net (€)":net,"FCF (€)":fcfs,"PV(FCF)":pv_fcfs})
-st.dataframe(dfres.style.format("€{:,.0f}"),use_container_width=True)
+dfres=pd.DataFrame({
+    "Year":[str(y) for y in years],
+    "Sales (€)":sales,"EBIT (€)":ebit,"Net (€)":net,"FCF (€)":fcfs,"PV(FCF)":pv_fcfs
+})
+st.dataframe(
+    dfres.style.format({c:"€{:,.0f}" for c in dfres.columns if c!="Year"}),
+    use_container_width=True
+)
 fig=plt.figure(figsize=(9,4.5))
 plt.plot(years,fcfs,"o-",label="FCF");plt.plot(years,pv_fcfs,"o-",label="PV(FCF)")
 plt.axhline(0,color="gray",lw=.8);plt.legend();plt.title(f"Free Cash Flow — {company}");st.pyplot(fig)
@@ -219,7 +212,9 @@ col1.metric("IRR (FCF)",f"{IRR_fcf*100:.2f}%" if not np.isnan(IRR_fcf) else "N/A
 col2.metric("IRR (Net Profit)",f"{IRR_net*100:.2f}%" if not np.isnan(IRR_net) else "N/A")
 fig2=plt.figure(figsize=(5.5,4))
 plt.bar(["FCF","Net"],[IRR_fcf*100,IRR_net*100]);plt.ylabel("%");plt.title(f"IRR — {company}")
-for i,v in enumerate([IRR_fcf*100,IRR_net*100]):plt.text(i,v+0.3,f"{v:.2f}%",ha="center");st.pyplot(fig2)
+for i,v in enumerate([IRR_fcf*100,IRR_net*100]):
+    if not np.isnan(v): plt.text(i,v+0.3,f"{v:.2f}%",ha="center")
+st.pyplot(fig2)
 
 # ------------------------
 # SENSITIVITY
@@ -227,5 +222,8 @@ for i,v in enumerate([IRR_fcf*100,IRR_net*100]):plt.text(i,v+0.3,f"{v:.2f}%",ha=
 st.subheader("📊 Sensitivity EV by WACC & g")
 wr=np.arange(max(0.05,WACC-0.02),WACC+0.025,0.005)
 gr=np.arange(g-0.01,g+0.015,0.005)
-mt=[[sum(pv(fcfs,w))+ (fcfs[-1]*(1+gg)/(w-gg)/((1+w)**len(fcfs)) if w>gg else 0) for gg in gr] for w in wr]
-st.dataframe(pd.DataFrame(mt,index=[f"{w*100:.1f}%" for w in wr],columns=[f"{x*100:.1f}%" for x in gr]).style.format("€{:,.0f}"),use_container_width=True)
+mt=[[sum(pv(fcfs,w))+ (fcfs[-1]*(1+gg)/(w-gg)/((1+w)**len(fcfs)) if w>gg else 0)
+     for gg in gr] for w in wr]
+st.dataframe(
+    pd.DataFrame(mt,index=[f"{w*100:.1f}%" for w in wr],columns=[f"{x*100:.1f}%" for x in gr])
+    .style.format("€{:,.0f}"), use_container_width=True)
