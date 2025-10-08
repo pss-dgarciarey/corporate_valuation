@@ -1,5 +1,5 @@
 # ===============================================================
-# Multi-Company DCF + WACC Valuation App (PSS & MDKB) — Dynamic v3.2
+# Multi-Company DCF + WACC Valuation App (PSS & MDKB) — Dynamic v3
 # ===============================================================
 
 import os, io, json, datetime as dt
@@ -108,31 +108,26 @@ st.sidebar.markdown("### **Company Selection**")
 company = st.sidebar.selectbox("**Select Company**", ["PSS", "MDKB"])
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("### **Input Precision**")
-prec = st.sidebar.slider("Number of decimals for input fields", 0, 4, 2)
-step_small = float(f"0.{'0'*(prec-1)}1") if prec>0 else 1.0
-
-st.sidebar.markdown("---")
 st.sidebar.markdown("### **Capital & Risk Assumptions**")
-rf=st.sidebar.number_input("Risk-free rate",value=0.027,step=step_small)
-mrp=st.sidebar.number_input("Market risk premium",value=0.04,step=step_small)
+rf=st.sidebar.number_input("Risk-free rate",value=0.027,step=0.001)
+mrp=st.sidebar.number_input("Market risk premium",value=0.04,step=0.001)
 beta=st.sidebar.number_input("Beta",value=1.2,step=0.05)
-tax=st.sidebar.number_input("Tax rate",value=0.30,step=step_small)
-g=st.sidebar.number_input("Terminal growth (g)",value=0.02,step=step_small)
+tax=st.sidebar.number_input("Tax rate",value=0.30,step=0.01)
+g=st.sidebar.number_input("Terminal growth (g)",value=0.02,step=0.001)
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### **Operational Assumptions**")
-dep_pct=st.sidebar.number_input("Depreciation % of Sales",value=0.01,step=step_small)
-capex_pct=st.sidebar.number_input("CapEx % of Sales",value=0.01,step=step_small)
+dep_pct=st.sidebar.number_input("Depreciation % of Sales",value=0.01,step=0.001)
+capex_pct=st.sidebar.number_input("CapEx % of Sales",value=0.01,step=0.001)
 use_nwc=st.sidebar.checkbox("Include ΔNWC adjustment",value=True)
 default_nwc=-0.41 if company=="MDKB" else 0.10
 nwc_pct=st.sidebar.number_input("ΔNWC % of ΔSales",value=float(default_nwc),step=0.01)
-mdkb_extend_growth=st.sidebar.number_input("MDKB 2029 growth",value=0.02,step=step_small)
+mdkb_extend_growth=st.sidebar.number_input("MDKB 2029 growth",value=0.02,step=0.005)
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### **Debt & Financing**")
 debt=st.sidebar.number_input("Debt (€)",value=0.0,step=1_000_000.0)
-rd=st.sidebar.number_input("Cost of Debt (Rd)",value=0.04,step=step_small)
+rd=st.sidebar.number_input("Cost of Debt (Rd)",value=0.04,step=0.005)
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### **Acquisition & IRR Settings**")
@@ -188,6 +183,7 @@ if "Computed" in fcf_source:
         if company=="PSS" and y==2029: fcf=df.loc[y,"FCF_kEUR"]*1000
         fcfs.append(fcf)
 else:
+    # “Table” mode but responsive to assumptions
     base_fcfs=(df["FCF_kEUR"].values*1000).astype(float)
     adj=[]
     for i,y in enumerate(years):
@@ -196,6 +192,7 @@ else:
         dep=s*dep_pct; capex=s*capex_pct
         dNWC=(s-prev)*nwc_pct if (use_nwc and i>0) else 0
         driver=(e*(1-tax))+dep-capex-dNWC
+        # Adjustment proportional to EBIT
         adj_fcf=base_fcfs[i]+0.1*(driver-(e*(1-tax)))
         adj.append(adj_fcf)
     fcfs=adj
@@ -212,24 +209,31 @@ st.title("💼 Corporate Valuation — DCF & WACC")
 st.caption(f"Logged in as **{USER_NAMES.get(st.session_state['user'], st.session_state['user'])}** — {dt.datetime.now():%H:%M}")
 
 if "Computed" in fcf_source:
-    st.success("Using **Computed FCFF** — driver-based and sensitive to assumptions.")
+    st.success("The model is currently using **Computed Free Cash Flow (FCFF)**. "
+        "This represents the cash flow available to all investors, derived from operating profits before financing effects.\n\n"
+        "**Formula:**  \nFCFF = EBIT × (1 − Tax) + Depreciation − CapEx − ΔNWC  \n"
+        "Where:  \n• Depreciation = Dep% × Sales  \n• CapEx = CapEx% × Sales  \n• ΔNWC = (Salesₜ − Salesₜ₋₁) × (ΔNWC% of ΔSales)\n\n"
+        "This method ensures consistency with the chosen cost and growth drivers but may not match accounting cash flows exactly.")
 else:
-    st.info("Using **Table FCF (Adjusted)** — management plan with minor adjustments.")
+    st.info("The model is using **Table Free Cash Flow (Adjusted)**. "
+            "Original management FCF values are used but adjusted dynamically according to sidebar assumptions. "
+            "This allows responsiveness while retaining the plan structure.")
 
 # ------------------------
 # RESULTS
 # ------------------------
 st.subheader(f"Key Lines — {title}")
 disp=df.copy();disp.insert(0,"Year",[str(y) for y in years])
-st.dataframe(disp.style.format({c:"{:,.2f}" for c in disp.columns if c.endswith('_kEUR')}),use_container_width=True)
+st.dataframe(disp.style.format({c:"{:,.0f}" for c in disp.columns if c.endswith("_kEUR")}),use_container_width=True)
 
 c1,c2,c3,c4,c5=st.columns(5)
 c1.metric("Re",f"{Re*100:.2f}%");c2.metric("Rd",f"{rd*100:.2f}%")
-c3.metric("WACC",f"{WACC*100:.2f}%");c4.metric("EV",f"€{EV:,.2f}");c5.metric("Equity",f"€{EqV:,.2f}")
+c3.metric("WACC",f"{WACC*100:.2f}%");c4.metric("EV",f"€{EV:,.0f}");c5.metric("Equity",f"€{EqV:,.0f}")
+st.caption("⚙️ Note: Changing the FCF model modifies underlying cashflows, hence the EV & Equity values differ accordingly.")
 
 dfres=pd.DataFrame({"Year":[str(y) for y in years],
                     "Sales (€)":sales_eur,"EBIT (€)":ebit_eur,"Net (€)":net_eur,"FCF (€)":fcfs,"PV(FCF)":pv_fcfs})
-st.dataframe(dfres.style.format({c:"€{:,.2f}" for c in dfres.columns if c!="Year"}),use_container_width=True)
+st.dataframe(dfres.style.format({c:"€{:,.0f}" for c in dfres.columns if c!="Year"}),use_container_width=True)
 
 fig=plt.figure(figsize=(9,4.5))
 plt.plot(years,fcfs,"o-",label="FCF");plt.plot(years,pv_fcfs,"o-",label="PV(FCF)")
@@ -270,7 +274,7 @@ wr=np.arange(max(0.05,WACC-0.02),WACC+0.025,0.005)
 gr=np.arange(g-0.01,g+0.015,0.005)
 mt=[[sum(pv(fcfs,w))+(fcfs[-1]*(1+gg)/(w-gg)/((1+w)**len(fcfs)) if w>gg else 0) for gg in gr] for w in wr]
 df_sens=pd.DataFrame(mt,index=[f"{w*100:.1f}%" for w in wr],columns=[f"{x*100:.1f}%" for x in gr])
-st.dataframe(df_sens.style.format("€{:,.2f}"),use_container_width=True)
+st.dataframe(df_sens.style.format("€{:,.0f}"),use_container_width=True)
 
 # ------------------------
 # EXPORT
