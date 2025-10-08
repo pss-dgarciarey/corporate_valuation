@@ -1,5 +1,5 @@
 # ===============================================================
-# Multi-Company DCF + WACC Valuation App (PSS & MDKB) — Final
+# Multi-Company DCF + WACC Valuation App (PSS & MDKB) — Dynamic v3
 # ===============================================================
 
 import os, io, json, datetime as dt
@@ -17,7 +17,6 @@ USERS = {
     os.getenv("USER2"): os.getenv("USER2_PWD"),
     os.getenv("USER3"): os.getenv("USER3_PWD"),
     os.getenv("USER4"): os.getenv("USER4_PWD"),
-    os.getenv("USER5"): os.getenv("USER5_PWD"),
 }
 USER_NAMES = {
     "d.garcia": "Daniel Garcia Rey",
@@ -54,7 +53,7 @@ def ts_folder(root):
     return path
 
 # ------------------------
-# DATASETS
+# BASE DATA
 # ------------------------
 years_pss = [2025, 2026, 2027, 2028, 2029]
 df_pss = pd.DataFrame({
@@ -67,12 +66,12 @@ df_pss = pd.DataFrame({
 }, index=years_pss)
 
 sales_m_25_28 = [13.7, 11.7, 12.0, 12.3]
-ebit_m_25_28  = [0.8,  0.9,  1.0,  1.0]
-net_m_25_28   = [0.6,  0.7,  0.7,  0.7]
+ebit_m_25_28  = [0.8, 0.9, 1.0, 1.0]
+net_m_25_28   = [0.6, 0.7, 0.7, 0.7]
 fcf_m_25_28   = [-0.7, 0.3, 0.4, 0.4]
-cash_m_25_28  = [2.2,  2.5,  2.9,  3.3]
+cash_m_25_28  = [2.2, 2.5, 2.9, 3.3]
 equity_m_25_29 = [12.1, 12.6, 13.3, 14.0, 14.6]
-nwc_m_25_29    = [5.5,  6.4,  6.4,  6.3,  6.2]
+nwc_m_25_29    = [5.5, 6.4, 6.4, 6.3, 6.2]
 def m_to_k(seq): return [int(round(v*1000)) for v in seq]
 
 # ------------------------
@@ -110,20 +109,20 @@ company = st.sidebar.selectbox("**Select Company**", ["PSS", "MDKB"])
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### **Capital & Risk Assumptions**")
-rf=st.sidebar.number_input("Risk-free rate (Rf)",value=0.027,step=0.001)
-mrp=st.sidebar.number_input("Market risk premium (MRP)",value=0.04,step=0.001)
-beta=st.sidebar.number_input("Equity beta (β)",value=1.2,step=0.05)
-tax=st.sidebar.number_input("Tax rate (T)",value=0.30,step=0.01)
+rf=st.sidebar.number_input("Risk-free rate",value=0.027,step=0.001)
+mrp=st.sidebar.number_input("Market risk premium",value=0.04,step=0.001)
+beta=st.sidebar.number_input("Beta",value=1.2,step=0.05)
+tax=st.sidebar.number_input("Tax rate",value=0.30,step=0.01)
 g=st.sidebar.number_input("Terminal growth (g)",value=0.02,step=0.001)
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### **Operational Assumptions**")
 dep_pct=st.sidebar.number_input("Depreciation % of Sales",value=0.01,step=0.001)
 capex_pct=st.sidebar.number_input("CapEx % of Sales",value=0.01,step=0.001)
-use_nwc=st.sidebar.checkbox("Include ΔNWC adjustment (if no FCF)",value=True)
+use_nwc=st.sidebar.checkbox("Include ΔNWC adjustment",value=True)
 default_nwc=-0.41 if company=="MDKB" else 0.10
 nwc_pct=st.sidebar.number_input("ΔNWC % of ΔSales",value=float(default_nwc),step=0.01)
-mdkb_extend_growth=st.sidebar.number_input("MDKB 2029 growth (Sales & FCF)",value=0.02,step=0.005)
+mdkb_extend_growth=st.sidebar.number_input("MDKB 2029 growth",value=0.02,step=0.005)
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### **Debt & Financing**")
@@ -136,17 +135,13 @@ assumed_price_mdkb=st.sidebar.number_input("Assumed Price for MDKB (€)",value=
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### **FCF Source**")
-fcf_source = st.sidebar.radio(
-    "Choose which FCF series to use:",
-    ["Computed (from EBIT, Dep%, CapEx%, ΔNWC)", "Table (provided FCF)"],
-    index=0 if company=="PSS" else 1
-)
+fcf_source=st.sidebar.radio("Choose FCF model:",["Computed (from EBIT, Dep%, CapEx%, ΔNWC)","Table (provided FCF, adjusted by drivers)"],index=0 if company=="PSS" else 1)
 
 # ------------------------
-# BUILD DATA
+# DATA PREP
 # ------------------------
 if company=="PSS":
-    df=df_pss.copy();title="Power Service Solutions GmbH (PSS)"
+    df=df_pss.copy(); title="Power Service Solutions GmbH (PSS)"
 else:
     s25_28,eb25_28,n25_28,fc25_28,c25_28=m_to_k(sales_m_25_28),m_to_k(ebit_m_25_28),m_to_k(net_m_25_28),m_to_k(fcf_m_25_28),m_to_k(cash_m_25_28)
     eq25_29,nwc25_29=m_to_k(equity_m_25_29),m_to_k(nwc_m_25_29)
@@ -168,7 +163,7 @@ else:
 years=list(df.index)
 
 # ------------------------
-# DCF: Build FCFS
+# CALCULATIONS
 # ------------------------
 E=df["Equity_kEUR"].iloc[-1]*1000;D=debt
 Re=capm_cost_equity(rf,mrp,beta);WACC=compute_wacc(E,D,Re,rd,tax)
@@ -180,15 +175,27 @@ cash=df["Cash_kEUR"].iloc[-1]*1000
 if "Computed" in fcf_source:
     fcfs=[]
     for i,y in enumerate(years):
-        s=sales_eur[i];prev=sales_eur[i-1] if i>0 else s
+        s=sales_eur[i]; prev=sales_eur[i-1] if i>0 else s
         e=ebit_eur[i]
-        dep=s*dep_pct;capex=s*capex_pct
+        dep=s*dep_pct; capex=s*capex_pct
         dNWC=(s-prev)*nwc_pct if (use_nwc and i>0) else 0
         fcf=(e*(1-tax))+dep-capex-dNWC
-        if (company=="PSS") and (y==2029): fcf=df.loc[y,"FCF_kEUR"]*1000
+        if company=="PSS" and y==2029: fcf=df.loc[y,"FCF_kEUR"]*1000
         fcfs.append(fcf)
 else:
-    fcfs=(df["FCF_kEUR"].values*1000).astype(float).tolist()
+    # “Table” mode but responsive to assumptions
+    base_fcfs=(df["FCF_kEUR"].values*1000).astype(float)
+    adj=[]
+    for i,y in enumerate(years):
+        s=sales_eur[i]; prev=sales_eur[i-1] if i>0 else s
+        e=ebit_eur[i]
+        dep=s*dep_pct; capex=s*capex_pct
+        dNWC=(s-prev)*nwc_pct if (use_nwc and i>0) else 0
+        driver=(e*(1-tax))+dep-capex-dNWC
+        # Adjustment proportional to EBIT
+        adj_fcf=base_fcfs[i]+0.1*(driver-(e*(1-tax)))
+        adj.append(adj_fcf)
+    fcfs=adj
 
 pv_fcfs=pv(fcfs,WACC)
 tv=fcfs[-1]*(1+g)/(WACC-g) if WACC>g else np.nan
@@ -196,42 +203,33 @@ pv_tv=tv/((1+WACC)**len(fcfs)) if not np.isnan(tv) else 0
 EV=sum(pv_fcfs)+pv_tv;EqV=EV+cash-D
 
 # ------------------------
-# HEADER & EXPLANATION (main area)
+# HEADER
 # ------------------------
 st.title("💼 Corporate Valuation — DCF & WACC")
 st.caption(f"Logged in as **{USER_NAMES.get(st.session_state['user'], st.session_state['user'])}** — {dt.datetime.now():%H:%M}")
 
 if "Computed" in fcf_source:
-    st.success(
-        "The model is currently using **Computed Free Cash Flow (FCFF)**. "
-        "This represents the cash flow available to all investors, derived from operating profits before financing effects.\n\n"
-        "**Formula:**  \nFCFF = EBIT × (1 − Tax) + Depreciation − CapEx − ΔNWC  \n"
-        "Where:\n• Depreciation = Dep% × Sales  \n• CapEx = CapEx% × Sales  \n• ΔNWC = (Salesₜ − Salesₜ₋₁) × (ΔNWC% of ΔSales)\n\n"
-        "This method ensures consistency with the chosen cost and growth drivers but may not match accounting cash flows exactly."
-    )
+    st.success("The model is currently using **Computed Free Cash Flow (FCFF)** derived from EBIT, taxes, Depreciation, CapEx, and ΔNWC. "
+               "This method is consistent with financial drivers but may differ from accounting cash flows.")
 else:
-    st.info(
-        "The model is currently using **Table Free Cash Flow**. "
-        "These figures are taken directly from the provided financial plan (after-tax free cash flow). "
-        "This method aligns with management projections but may embed assumptions that are not visible or adjustable."
-    )
+    st.info("The model is using **Table Free Cash Flow (Adjusted)**. "
+            "Original management FCF values are used but adjusted dynamically according to sidebar assumptions. "
+            "This allows responsiveness while retaining the plan structure.")
 
 # ------------------------
-# DISPLAY
+# RESULTS
 # ------------------------
-st.subheader(f"Key Lines ({years[0]}–{years[-1]}) — {title}")
+st.subheader(f"Key Lines — {title}")
 disp=df.copy();disp.insert(0,"Year",[str(y) for y in years])
 st.dataframe(disp.style.format({c:"{:,.0f}" for c in disp.columns if c.endswith("_kEUR")}),use_container_width=True)
 
 c1,c2,c3,c4,c5=st.columns(5)
 c1.metric("Re",f"{Re*100:.2f}%");c2.metric("Rd",f"{rd*100:.2f}%")
 c3.metric("WACC",f"{WACC*100:.2f}%");c4.metric("EV",f"€{EV:,.0f}");c5.metric("Equity",f"€{EqV:,.0f}")
+st.caption("⚙️ Note: Changing the FCF model modifies underlying cashflows, hence the EV & Equity values differ accordingly.")
 
-dfres=pd.DataFrame({
-    "Year":[str(y) for y in years],
-    "Sales (€)":sales_eur,"EBIT (€)":ebit_eur,"Net (€)":net_eur,"FCF (€)":fcfs,"PV(FCF)":pv_fcfs
-})
-st.subheader("DCF Inputs & Results")
+dfres=pd.DataFrame({"Year":[str(y) for y in years],
+                    "Sales (€)":sales_eur,"EBIT (€)":ebit_eur,"Net (€)":net_eur,"FCF (€)":fcfs,"PV(FCF)":pv_fcfs})
 st.dataframe(dfres.style.format({c:"€{:,.0f}" for c in dfres.columns if c!="Year"}),use_container_width=True)
 
 fig=plt.figure(figsize=(9,4.5))
@@ -262,48 +260,47 @@ col1,col2=st.columns(2)
 col1.metric("IRR (FCF)",f"{IRR_fcf*100:.2f}%" if not np.isnan(IRR_fcf) else "N/A")
 col2.metric("IRR (Net Profit)",f"{IRR_net*100:.2f}%" if not np.isnan(IRR_net) else "N/A")
 fig2=plt.figure(figsize=(5.5,4))
-vals=[IRR_fcf*100 if not np.isnan(IRR_fcf) else np.nan,IRR_net*100 if not np.isnan(IRR_net) else np.nan]
-plt.bar(["FCF","Net"],vals);plt.ylabel("%");plt.title(f"IRR — {company}")
-for i,v in enumerate(vals):
-    if not np.isnan(v):plt.text(i,v+0.3,f"{v:.2f}%",ha="center")
+plt.bar(["FCF","Net"],[IRR_fcf*100,IRR_net*100]);plt.ylabel("%");plt.title(f"IRR — {company}")
 st.pyplot(fig2)
 
 # ------------------------
 # SENSITIVITY
 # ------------------------
-st.subheader("📊 Sensitivity EV by WACC & g")
+st.markdown("### **📊 Sensitivity: Enterprise Value by WACC & Terminal Growth (g)**")
 wr=np.arange(max(0.05,WACC-0.02),WACC+0.025,0.005)
 gr=np.arange(g-0.01,g+0.015,0.005)
 mt=[[sum(pv(fcfs,w))+(fcfs[-1]*(1+gg)/(w-gg)/((1+w)**len(fcfs)) if w>gg else 0) for gg in gr] for w in wr]
-st.dataframe(pd.DataFrame(mt,index=[f"{w*100:.1f}%" for w in wr],columns=[f"{x*100:.1f}%" for x in gr]).style.format("€{:,.0f}"),use_container_width=True)
+df_sens=pd.DataFrame(mt,index=[f"{w*100:.1f}%" for w in wr],columns=[f"{x*100:.1f}%" for x in gr])
+st.dataframe(df_sens.style.format("€{:,.0f}"),use_container_width=True)
 
 # ------------------------
 # EXPORT
 # ------------------------
 st.markdown("### 📦 Export Options")
+if st.button("💾 Export locally"):
+    out=ts_folder(RESULTS_DIR)
+    dfres.to_csv(os.path.join(out,"dcf_results.csv"),index=False)
+    df_sens.to_csv(os.path.join(out,"sensitivity.csv"))
+    with open(os.path.join(out,"assumptions.json"),"w") as f:
+        json.dump({"company":company,"FCF_source":fcf_source,"EV":EV,"Equity":EqV,"IRR_FCF":IRR_fcf,"IRR_Net":IRR_net},f,indent=2)
+    fig.savefig(os.path.join(out,"DCF_chart.png"),dpi=150,bbox_inches="tight")
+    fig2.savefig(os.path.join(out,"IRR_chart.png"),dpi=150,bbox_inches="tight")
+    st.success(f"✅ Exported locally to: {out}")
 
 excel_buffer=io.BytesIO()
 with pd.ExcelWriter(excel_buffer,engine="xlsxwriter") as writer:
-    disp.to_excel(writer,sheet_name="Key_Lines",index=False)
     dfres.to_excel(writer,sheet_name="DCF_Results",index=False)
-    pd.DataFrame(mt,index=[f"{w*100:.1f}%" for w in wr],columns=[f"{x*100:.1f}%" for x in gr]).to_excel(writer,sheet_name="Sensitivity",index=True)
-    # Charts to Excel
+    df_sens.to_excel(writer,sheet_name="Sensitivity",index=True)
     workbook=writer.book
-    worksheet_dcf=workbook.add_worksheet("Chart_DCF")
-    worksheet_irr=workbook.add_worksheet("Chart_IRR")
-    img_dcf=io.BytesIO();fig.savefig(img_dcf,format="png",dpi=150);img_dcf.seek(0)
-    worksheet_dcf.insert_image("B2","DCF.png",{"image_data":img_dcf})
-    img_irr=io.BytesIO();fig2.savefig(img_irr,format="png",dpi=150);img_irr.seek(0)
-    worksheet_irr.insert_image("B2","IRR.png",{"image_data":img_irr})
-    # Summary
-    pd.DataFrame({
-        "Metric":["Company","FCF Source","EV","Equity","IRR (FCF)","IRR (Net)","WACC","Re","Rd"],
-        "Value":[company,fcf_source,EV,EqV,IRR_fcf,IRR_net,WACC,Re,rd]
-    }).to_excel(writer,sheet_name="Summary",index=False)
+    ws1=workbook.add_worksheet("Chart_DCF"); ws2=workbook.add_worksheet("Chart_IRR")
+    img1=io.BytesIO(); fig.savefig(img1,format="png",dpi=150); img1.seek(0)
+    img2=io.BytesIO(); fig2.savefig(img2,format="png",dpi=150); img2.seek(0)
+    ws1.insert_image("B2","DCF.png",{"image_data":img1})
+    ws2.insert_image("B2","IRR.png",{"image_data":img2})
+    pd.DataFrame({"Metric":["Company","FCF Source","EV","Equity","IRR (FCF)","IRR (Net)","WACC","Re","Rd"],
+                  "Value":[company,fcf_source,EV,EqV,IRR_fcf,IRR_net,WACC,Re,rd]}).to_excel(writer,sheet_name="Summary",index=False)
 excel_buffer.seek(0)
-st.download_button(
-    label=f"⬇️ Download {company} Excel Report (with charts)",
-    data=excel_buffer,
-    file_name=f"{company}_Valuation_Report_{dt.datetime.now():%Y%m%d}.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-)
+st.download_button(label=f"⬇️ Download {company} Excel Report (with charts)",
+                   data=excel_buffer,
+                   file_name=f"{company}_Valuation_Report_{dt.datetime.now():%Y%m%d}.xlsx",
+                   mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
