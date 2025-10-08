@@ -212,7 +212,7 @@ if "Computed" in fcf_source:
     st.success("The model is currently using **Computed Free Cash Flow (FCFF)**. "
         "This represents the cash flow available to all investors, derived from operating profits before financing effects.\n\n"
         "**Formula:**  \nFCFF = EBIT × (1 − Tax) + Depreciation − CapEx − ΔNWC  \n"
-        "Where:\n• Depreciation = Dep% × Sales  \n• CapEx = CapEx% × Sales  \n• ΔNWC = (Salesₜ − Salesₜ₋₁) × (ΔNWC% of ΔSales)\n\n"
+        "Where:  \n• Depreciation = Dep% × Sales  \n• CapEx = CapEx% × Sales  \n• ΔNWC = (Salesₜ − Salesₜ₋₁) × (ΔNWC% of ΔSales)\n\n"
         "This method ensures consistency with the chosen cost and growth drivers but may not match accounting cash flows exactly.")
 else:
     st.info("The model is using **Table Free Cash Flow (Adjusted)**. "
