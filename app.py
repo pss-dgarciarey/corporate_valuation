@@ -66,7 +66,7 @@ def ts_folder(root):
     return path
 
 # ------------------------
-# BASE DATA — PSS (kEUR, 2025–2029)
+# PSS BASE DATA (kEUR, 2025–2029)
 # ------------------------
 years_pss = [2025, 2026, 2027, 2028, 2029]
 data_pss = {
@@ -80,36 +80,27 @@ data_pss = {
 df_pss = pd.DataFrame(data_pss, index=years_pss)
 
 # ------------------------
-# BASE DATA — MDKB (EUR m in sources → convert to kEUR)
-# Years used: FY24–FY28 (per plan). DCF/TV done on last provided year.
+# MDKB DATA (from your screenshots, EUR m → converted to kEUR)
+# Given for FY24–FY28; we align to FY25–FY29 and synthesize FY29
+# as per your rule (use 2028 margins; grow Sales & FCF by sidebar %).
 # ------------------------
-years_mdkb = [2024, 2025, 2026, 2027, 2028]
+# Source literals (EUR m), VERIFY if any number differs:
+sales_m_24_28 = [15.3, 12.7, 11.7, 12.0, 12.3]
+ebit_m_24_28  = [0.4,  0.8,  0.9,  1.0,  1.0]
+net_m_24_28   = [0.6,  0.6,  0.7,  0.7,  0.7]
+cash_m_24_28  = [2.9, 2.2, 2.5, 2.9, 3.3]
+fcf_m_24_28   = [-2.9, -0.7, 0.3, 0.2, 0.3]      # after taxes
+equity_m_year = {2025:12.1, 2026:12.6, 2027:13.3, 2028:14.0, 2029:14.6}
 
-# --- VERIFY these literals against your sheets (transcribed from your screenshots) ---
-# P&L (EUR m)
-sales_m = [15.3, 12.7, 11.7, 12.0, 12.3]      # VERIFY
-ebit_m  = [0.4,  0.8,  0.9,  1.0,  1.0]       # VERIFY
-net_m   = [0.6,  0.6,  0.7,  0.7,  0.7]       # VERIFY
+def m_to_k(seq): return [int(round(v*1000)) for v in seq]
 
-# Balance sheet Equity (EUR m) — Mar25–Mar29 ~ map to FY25–FY29; we use FY25–FY28 here
-equity_m_map = {2025:12.1, 2026:12.6, 2027:13.3, 2028:14.0, 2029:14.6}  # VERIFY
-
-# Cash EoP (EUR m) from cash flow sheet FY24–FY28
-cash_m = [2.9, 2.2, 2.5, 2.9, 3.3]            # VERIFY (FY24..FY28)
-
-# Free Cash Flow (after taxes) (EUR m) — use directly for DCF
-fcf_m = [-2.9, -0.7, 0.3, 0.2, 0.3]           # FY24..FY28
-
-# Convert to kEUR and align
-def m_to_k(x): return [int(round(v*1000)) for v in x]
-df_mdkb = pd.DataFrame({
-    "Sales_kEUR": m_to_k(sales_m),
-    "EBIT_kEUR":  m_to_k(ebit_m),
-    "Net_kEUR":   m_to_k(net_m),
-    "Equity_kEUR":[ int(round(equity_m_map.get(y, np.nan)*1000)) if y in equity_m_map else np.nan for y in years_mdkb ],
-    "Cash_kEUR":  m_to_k(cash_m),
-    "FCF_kEUR":   m_to_k(fcf_m),
-}, index=years_mdkb)
+# Build FY25–FY28 directly from provided FY25–FY28 rows (index 1..4 of 24–28 arrays)
+years_mdkb_base = [2025, 2026, 2027, 2028]
+sales_m_25_28 = sales_m_24_28[1:]
+ebit_m_25_28  = ebit_m_24_28[1:]
+net_m_25_28   = net_m_24_28[1:]
+cash_m_25_28  = cash_m_24_28[1:]
+fcf_m_25_28   = fcf_m_24_28[1:]
 
 # ------------------------
 # FUNCTIONS
@@ -193,11 +184,13 @@ st.sidebar.markdown("---")
 st.sidebar.header("Operational Assumptions")
 dep_pct = st.sidebar.number_input("Depreciation % of Sales", value=0.01, step=0.001, format="%.4f")
 capex_pct = st.sidebar.number_input("CapEx % of Sales", value=0.01, step=0.001, format="%.4f")
-use_nwc = st.sidebar.checkbox("Include ΔNWC adjustment (only used if FCF not provided)", value=True)
+use_nwc = st.sidebar.checkbox("Include ΔNWC adjustment (only if FCF missing)", value=True)
 nwc_pct = 0.10
 if use_nwc:
     nwc_pct = st.sidebar.number_input("ΔNWC % of ΔSales", value=0.10, step=0.005, format="%.4f")
-sales_growth = st.sidebar.number_input("Sales growth for last year (if needed)", value=0.02, step=0.005, format="%.4f")
+
+# PSS already had a last-year growth control. Add **MDKB extension growth** for 2029 synthesis.
+mdkb_extend_growth = st.sidebar.number_input("MDKB 2029 growth (Sales & FCF)", value=0.02, step=0.005, format="%.4f")
 
 st.sidebar.markdown("---")
 st.sidebar.header("Debt & Financing")
@@ -209,19 +202,51 @@ st.sidebar.header("Acquisition & IRR Settings")
 assumed_price_mdkb = st.sidebar.number_input("Assumed Price for MDKB (€)", value=0.0, step=100_000.0, format="%.0f")
 
 # ------------------------
-# PICK DATAFRAME BY COMPANY
+# BUILD DATAFRAME BY COMPANY
 # ------------------------
 if company == "PSS":
     df_base = df_pss.copy()
     title_company = "Power Service Solutions GmbH (PSS)"
 else:
-    df_base = df_mdkb.copy()
+    # Construct FY25–FY29 for MDKB
+    # FY25–FY28 from provided data; FY29 synthesized.
+    sales_25_28_k = m_to_k(sales_m_25_28)
+    ebit_25_28_k  = m_to_k(ebit_m_25_28)
+    net_25_28_k   = m_to_k(net_m_25_28)
+    cash_25_28_k  = m_to_k(cash_m_25_28)
+    fcf_25_28_k   = m_to_k(fcf_m_25_28)
+
+    # 2028 margins
+    s28, ebit28, net28, fcf28, cash28 = sales_25_28_k[-1], ebit_25_28_k[-1], net_25_28_k[-1], fcf_25_28_k[-1], cash_25_28_k[-1]
+    ebit_margin_28 = (ebit28 / s28) if s28 != 0 else 0.0
+    net_margin_28  = (net28  / s28) if s28 != 0 else 0.0
+
+    # Synthesize 2029 by your rule:
+    sales_29_k = int(round(s28 * (1.0 + mdkb_extend_growth)))
+    ebit_29_k  = int(round(sales_29_k * ebit_margin_28))       # keep 2028 EBIT margin
+    net_29_k   = int(round(sales_29_k * net_margin_28))        # keep 2028 Net margin
+    fcf_29_k   = int(round(fcf28 * (1.0 + mdkb_extend_growth)))# grow FCF by same %
+    cash_29_k  = int(round(cash28 + fcf_29_k))                  # simple cash roll-forward
+    equity_25_29_k = [int(round(equity_m_year[y]*1000)) for y in [2025, 2026, 2027, 2028, 2029]]
+
+    df_base = pd.DataFrame({
+        "Sales_kEUR": sales_25_28_k + [sales_29_k],
+        "EBIT_kEUR":  ebit_25_28_k  + [ebit_29_k],
+        "Net_kEUR":   net_25_28_k   + [net_29_k],
+        "Equity_kEUR": equity_25_29_k,
+        "Cash_kEUR":  cash_25_28_k  + [cash_29_k],
+        "FCF_kEUR":   fcf_25_28_k   + [fcf_29_k],
+    }, index=[2025, 2026, 2027, 2028, 2029])
     title_company = "MDKB GmbH"
 
 years = list(df_base.index)
+
+# ---- DISPLAY TABLE: keep Year as text (no €)
 st.subheader(f"Excel Extract — Key Lines ({years[0]}–{years[-1]}) — {title_company}")
+df_display = df_base.copy()
+df_display.insert(0, "Year", [str(y) for y in years])
 st.dataframe(
-    df_base.style.format({
+    df_display.style.format({
         "Sales_kEUR": "{:,.0f}",
         "EBIT_kEUR": "{:,.0f}",
         "Net_kEUR": "{:,.0f}",
@@ -243,24 +268,10 @@ WACC = compute_wacc(E, D, Re, rd, tax)
 sales_eur = (df_base["Sales_kEUR"].values * 1000).astype(float)
 ebit_eur  = (df_base["EBIT_kEUR"].values  * 1000).astype(float)
 net_eur   = (df_base["Net_kEUR"].values   * 1000).astype(float)
+fcf_eur   = (df_base["FCF_kEUR"].values   * 1000).astype(float)
 
-# If FCF series provided, use it directly; otherwise build from assumptions
-fcf_col = df_base["FCF_kEUR"].values
-has_fcf = not np.isnan(fcf_col.astype(float)).all()
-fcfs = []
-
-if has_fcf:
-    fcfs = (fcf_col * 1000).astype(float).tolist()
-else:
-    for i, y in enumerate(years):
-        s = sales_eur[i]
-        prev_s = sales_eur[i - 1] if i > 0 else s
-        e = ebit_eur[i]
-        dep = s * dep_pct
-        capex = s * capex_pct
-        dNWC = (s - prev_s) * nwc_pct if (use_nwc and i > 0) else 0.0
-        fcf = (e * (1 - tax)) + dep - capex - dNWC
-        fcfs.append(fcf)
+# If FCF provided, use it directly
+fcfs = fcf_eur.tolist()
 
 cash = float(df_base["Cash_kEUR"].dropna().iloc[-1] * 1000)
 pv_fcfs = pv(fcfs, WACC)
@@ -283,7 +294,7 @@ c5.metric("Equity Value", f"€{equity_value:,.0f}")
 # TABLES & DCF GRAPH
 # ------------------------
 df_results = pd.DataFrame({
-    "Year": years,
+    "Year": [str(y) for y in years],
     "Sales (€)": sales_eur,
     "EBIT (€)": ebit_eur,
     "Net (€)": net_eur,
@@ -291,7 +302,16 @@ df_results = pd.DataFrame({
     "PV(FCF)": pv_fcfs,
 })
 st.subheader(f"DCF Inputs & Results ({years[0]}–{years[-1]}) — {title_company}")
-st.dataframe(df_results.style.format("€{:,.0f}"), use_container_width=True)
+st.dataframe(
+    df_results.style.format({
+        "Sales (€)": "€{:,.0f}",
+        "EBIT (€)": "€{:,.0f}",
+        "Net (€)": "€{:,.0f}",
+        "FCF (€)": "€{:,.0f}",
+        "PV(FCF)": "€{:,.0f}",
+    }),
+    use_container_width=True
+)
 
 fig = plt.figure(figsize=(9, 4.5))
 plt.plot(years, fcfs, "o-", label="FCF (€)")
@@ -310,27 +330,36 @@ st.subheader("💰 Internal Rate of Return (IRR) Analysis")
 
 irr_rows = []
 irr_rows_net = []
+IRR_fcf = np.nan
+IRR_net = np.nan
+irr_note_fcf = ""
+irr_note_net = ""
 
 if company == "PSS":
-    # PSS logic (unchanged): SPA schedule with MDKB deduction applied tail-first
+    # === PSS IRR LOGIC — EXACTLY AS BEFORE ===
     base_instalments = [
-        (years_pss[0], 500_000),
-        (years_pss[1], 2_500_000),
-        (years_pss[2], 3_500_000),
-        (years_pss[3], 6_800_000)
+        (2025, 500_000),
+        (2026, 2_500_000),
+        (2027, 3_500_000),
+        (2028, 6_800_000)
     ]
     adjusted_outflows, total_purchase_price = adjust_instalments_absolute_deduction(
         base_instalments, assumed_price_mdkb
     )
+
+    # IRR 1: FCF-based
     irr_cash_flows = []
     for i, y in enumerate(years):
         instal = adjusted_outflows.get(y, 0.0)  # negative or zero
         inflow = fcfs[i] + (tv if (i == len(years)-1 and not np.isnan(tv)) else 0.0)
         net_cf = instal + inflow
         irr_cash_flows.append(net_cf)
-        irr_rows.append([y, instal, fcfs[i], (tv if i == len(years)-1 else 0.0), net_cf])
+        irr_rows.append([str(y), instal, fcfs[i], (tv if i == len(years)-1 else 0.0), net_cf])
+    IRR_fcf = irr_bisection(irr_cash_flows)
+    if np.isnan(IRR_fcf):
+        irr_note_fcf = "No sign change in cash flows; tweak MDKB deduction vs SPA schedule."
 
-    # Net-profit IRR (equity-style) using effective SPA price after deduction at t0
+    # IRR 2: Net-profit IRR (equity-style)
     effective_price_paid = max(total_purchase_price - assumed_price_mdkb, 0.0)
     irr_cash_flows_net = []
     for i, y in enumerate(years):
@@ -338,39 +367,49 @@ if company == "PSS":
         inflow = net_eur[i] + (tv if (i == len(years)-1 and not np.isnan(tv)) else 0.0)
         net_cf = outflow + inflow
         irr_cash_flows_net.append(net_cf)
-        irr_rows_net.append([y, outflow, net_eur[i], (tv if i == len(years)-1 else 0.0), net_cf])
+        irr_rows_net.append([str(y), outflow, net_eur[i], (tv if i == len(years)-1 else 0.0), net_cf])
+    IRR_net = irr_bisection(irr_cash_flows_net)
+    if np.isnan(IRR_net):
+        irr_note_net = "IRR undefined (e.g., effective price paid = 0). Reduce deduction so price > 0."
 
 else:
-    # MDKB logic (inverted): user-imputed price is the initial outflow at t0; no SPA adjustment
+    # === MDKB IRR LOGIC — NEW, independent ===
     initial_outflow = -float(assumed_price_mdkb)
+
+    # IRR 1: FCF-based
     irr_cash_flows = []
     for i, y in enumerate(years):
         outflow = initial_outflow if i == 0 else 0.0
         inflow = fcfs[i] + (tv if (i == len(years)-1 and not np.isnan(tv)) else 0.0)
         net_cf = outflow + inflow
         irr_cash_flows.append(net_cf)
-        irr_rows.append([y, outflow, fcfs[i], (tv if i == len(years)-1 else 0.0), net_cf])
+        irr_rows.append([str(y), outflow, fcfs[i], (tv if i == len(years)-1 else 0.0), net_cf])
+    IRR_fcf = irr_bisection(irr_cash_flows)
+    if np.isnan(IRR_fcf):
+        irr_note_fcf = "IRR undefined (no sign change). Set a positive price and ensure positive inflows."
 
-    # Net-profit IRR (equity-style) with the same initial outflow, inflows = Net + TV
+    # IRR 2: Net-profit IRR
     irr_cash_flows_net = []
     for i, y in enumerate(years):
         outflow = initial_outflow if i == 0 else 0.0
         inflow = net_eur[i] + (tv if (i == len(years)-1 and not np.isnan(tv)) else 0.0)
         net_cf = outflow + inflow
         irr_cash_flows_net.append(net_cf)
-        irr_rows_net.append([y, outflow, net_eur[i], (tv if i == len(years)-1 else 0.0), net_cf])
+        irr_rows_net.append([str(y), outflow, net_eur[i], (tv if i == len(years)-1 else 0.0), net_cf])
+    IRR_net = irr_bisection(irr_cash_flows_net)
+    if np.isnan(IRR_net):
+        irr_note_net = "IRR undefined (no sign change). Increase price or check net profits."
 
-    effective_price_paid = float(assumed_price_mdkb)  # for reporting symmetry
-
-IRR_fcf = irr_bisection(irr_cash_flows)
-IRR_net = irr_bisection(irr_cash_flows_net)
-
-# Display both IRRs
+# --- Metrics + notes
 col1, col2 = st.columns(2)
 col1.metric("IRR (FCF-based)", f"{IRR_fcf*100:.2f}%" if not np.isnan(IRR_fcf) else "N/A")
 col2.metric("IRR (Net Profit-based)", f"{IRR_net*100:.2f}%" if not np.isnan(IRR_net) else "N/A")
+if irr_note_fcf:
+    st.caption(f"ℹ️ {irr_note_fcf}")
+if irr_note_net:
+    st.caption(f"ℹ️ {irr_note_net}")
 
-# Bar chart comparison
+# --- Bar chart
 fig_irr = plt.figure(figsize=(5.5, 4))
 vals = [IRR_fcf*100 if not np.isnan(IRR_fcf) else np.nan,
         IRR_net*100 if not np.isnan(IRR_net) else np.nan]
@@ -382,7 +421,7 @@ for i, val in enumerate(vals):
         plt.text(i, val + 0.5, f"{val:.2f}%", ha="center", fontsize=10)
 st.pyplot(fig_irr)
 
-# IRR Cash Flow Tables
+# --- IRR Cash Flow Tables
 if company == "PSS":
     st.markdown("#### IRR Cash Flows (FCF-based) — PSS")
     df_irr = pd.DataFrame(
@@ -409,7 +448,7 @@ st.dataframe(
 st.markdown("#### IRR Cash Flows (Net Profit-based)")
 df_irr_net = pd.DataFrame(
     irr_rows_net,
-    columns=["Year", "Initial Outflow (t0)" if company=="MDKB" else "Outflow @t0 (effective price)",
+    columns=["Year", "Outflow @t0 (effective price)" if company=="PSS" else "Initial Outflow (t0)",
              "Net Profit (inflow)", "Terminal Value (inflow)", "Net CF for IRR"]
 )
 st.dataframe(
@@ -457,11 +496,11 @@ if st.button("💾 Export locally"):
             "company": company,
             "rf": rf, "mrp": mrp, "beta": beta, "Re": Re, "Rd": rd, "tax": tax,
             "g": g, "dep_pct": dep_pct, "capex_pct": capex_pct, "use_nwc": use_nwc,
-            "nwc_pct": nwc_pct, "debt": D, "EV": EV, "EquityValue": equity_value,
+            "nwc_pct": nwc_pct, "debt": float(debt_amount), "EV": EV, "EquityValue": equity_value,
             "WACC": WACC, "fcf": fcfs, "pv_fcfs": pv_fcfs, "tv": tv, "pv_tv": pv_tv,
             "IRR_FCF": IRR_fcf, "IRR_NetProfit": IRR_net,
-            "assumed_price_mdkb": assumed_price_mdkb,
-            "effective_price_paid": float(effective_price_paid) if 'effective_price_paid' in locals() else None,
+            "assumed_price_mdkb": float(assumed_price_mdkb),
+            "mdkb_extend_growth": float(mdkb_extend_growth),
         }, f, indent=2)
     fig.savefig(os.path.join(out, f"{company}_DCF_chart.png"), dpi=150, bbox_inches="tight")
     fig_irr.savefig(os.path.join(out, f"{company}_IRR_chart.png"), dpi=150, bbox_inches="tight")
@@ -483,10 +522,11 @@ with pd.ExcelWriter(excel_buffer, engine="xlsxwriter") as writer:
     df_irr_net.to_excel(writer, sheet_name="IRR_NetProfit", index=False)
     pd.DataFrame({
         "Metric": ["Company","EV", "Equity Value", "IRR (FCF)", "IRR (Net Profit)", "WACC", "Re", "Rd",
-                   "Effective Price Paid / t0 Outflow", "MDKB Assumption"],
+                   "t0 Outflow / Effective Price", "MDKB Assumption", "MDKB 2029 growth"],
         "Value": [company, EV, equity_value, IRR_fcf, IRR_net, WACC, Re, rd,
-                  float(effective_price_paid) if 'effective_price_paid' in locals() else float(assumed_price_mdkb),
-                  float(assumed_price_mdkb)]
+                  (max( (500000+2500000+3500000+6800000) - assumed_price_mdkb, 0.0)
+                   if company=="PSS" else float(assumed_price_mdkb)),
+                  float(assumed_price_mdkb), float(mdkb_extend_growth)]
     }).to_excel(writer, sheet_name="Summary", index=False)
 excel_buffer.seek(0)
 
