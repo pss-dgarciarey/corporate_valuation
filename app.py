@@ -209,8 +209,11 @@ st.title("💼 Corporate Valuation — DCF & WACC")
 st.caption(f"Logged in as **{USER_NAMES.get(st.session_state['user'], st.session_state['user'])}** — {dt.datetime.now():%H:%M}")
 
 if "Computed" in fcf_source:
-    st.success("The model is currently using **Computed Free Cash Flow (FCFF)** derived from EBIT, taxes, Depreciation, CapEx, and ΔNWC. "
-               "This method is consistent with financial drivers but may differ from accounting cash flows.")
+    st.success("The model is currently using **Computed Free Cash Flow (FCFF)**. "
+        "This represents the cash flow available to all investors, derived from operating profits before financing effects.\n\n"
+        "**Formula:**  \nFCFF = EBIT × (1 − Tax) + Depreciation − CapEx − ΔNWC  \n"
+        "Where:\n• Depreciation = Dep% × Sales  \n• CapEx = CapEx% × Sales  \n• ΔNWC = (Salesₜ − Salesₜ₋₁) × (ΔNWC% of ΔSales)\n\n"
+        "This method ensures consistency with the chosen cost and growth drivers but may not match accounting cash flows exactly.")
 else:
     st.info("The model is using **Table Free Cash Flow (Adjusted)**. "
             "Original management FCF values are used but adjusted dynamically according to sidebar assumptions. "
