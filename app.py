@@ -1,5 +1,5 @@
-# =============================================================== 
-# Power Service Solutions GmbH — DCF + WACC Valuation App (Secure)
+# ===============================================================
+# Multi-Company DCF + WACC Valuation App (PSS & MDKB) — Secure
 # ===============================================================
 
 import os, io, json, datetime as dt
@@ -37,7 +37,7 @@ if "auth" not in st.session_state:
     st.session_state["auth"] = False
 
 if not st.session_state["auth"]:
-    st.title("🔐 PSS Corporate Valuation Login")
+    st.title("🔐 Corporate Valuation Login")
     user = st.text_input("Username")
     pwd = st.text_input("Password", type="password")
     if st.button("Login"):
@@ -45,7 +45,8 @@ if not st.session_state["auth"]:
             st.session_state["auth"] = True
             st.session_state["user"] = user
             name = USER_NAMES.get(user, user)
-            st.success(f"Welcome back, {name.split()[0]}!")
+            welcome_name = "Thomas" if user == "t.held" else name.split()[0]
+            st.success(f"Welcome back, {welcome_name}!")
         else:
             st.error("Invalid credentials. Please try again.")
     st.stop()
@@ -53,7 +54,7 @@ if not st.session_state["auth"]:
 # ------------------------
 # CONFIG
 # ------------------------
-st.set_page_config(page_title="PSS Valuation", layout="wide")
+st.set_page_config(page_title="PSS / MDKB Valuation", layout="wide")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 RESULTS_DIR = os.path.join(BASE_DIR, "results")
 os.makedirs(RESULTS_DIR, exist_ok=True)
@@ -65,10 +66,10 @@ def ts_folder(root):
     return path
 
 # ------------------------
-# BASE DATA
+# BASE DATA — PSS (kEUR, 2025–2029)
 # ------------------------
-years = [2025, 2026, 2027, 2028, 2029]
-data = {
+years_pss = [2025, 2026, 2027, 2028, 2029]
+data_pss = {
     "Sales_kEUR": [55650, 92408, 113161, 120765, 123180],
     "EBIT_kEUR":  [600, 2106, 5237, 7456, 7641],
     "Net_kEUR":   [535, 2135, 4845, 5218, 5322],
@@ -76,7 +77,39 @@ data = {
     "Cash_kEUR":  [8176, 11205, 20394, 28367, 36000],
     "FCF_kEUR":   [-6884, 2749, 9054, 7716, 5322],
 }
-df_base = pd.DataFrame(data, index=years)
+df_pss = pd.DataFrame(data_pss, index=years_pss)
+
+# ------------------------
+# BASE DATA — MDKB (EUR m in sources → convert to kEUR)
+# Years used: FY24–FY28 (per plan). DCF/TV done on last provided year.
+# ------------------------
+years_mdkb = [2024, 2025, 2026, 2027, 2028]
+
+# --- VERIFY these literals against your sheets (transcribed from your screenshots) ---
+# P&L (EUR m)
+sales_m = [15.3, 12.7, 11.7, 12.0, 12.3]      # VERIFY
+ebit_m  = [0.4,  0.8,  0.9,  1.0,  1.0]       # VERIFY
+net_m   = [0.6,  0.6,  0.7,  0.7,  0.7]       # VERIFY
+
+# Balance sheet Equity (EUR m) — Mar25–Mar29 ~ map to FY25–FY29; we use FY25–FY28 here
+equity_m_map = {2025:12.1, 2026:12.6, 2027:13.3, 2028:14.0, 2029:14.6}  # VERIFY
+
+# Cash EoP (EUR m) from cash flow sheet FY24–FY28
+cash_m = [2.9, 2.2, 2.5, 2.9, 3.3]            # VERIFY (FY24..FY28)
+
+# Free Cash Flow (after taxes) (EUR m) — use directly for DCF
+fcf_m = [-2.9, -0.7, 0.3, 0.2, 0.3]           # FY24..FY28
+
+# Convert to kEUR and align
+def m_to_k(x): return [int(round(v*1000)) for v in x]
+df_mdkb = pd.DataFrame({
+    "Sales_kEUR": m_to_k(sales_m),
+    "EBIT_kEUR":  m_to_k(ebit_m),
+    "Net_kEUR":   m_to_k(net_m),
+    "Equity_kEUR":[ int(round(equity_m_map.get(y, np.nan)*1000)) if y in equity_m_map else np.nan for y in years_mdkb ],
+    "Cash_kEUR":  m_to_k(cash_m),
+    "FCF_kEUR":   m_to_k(fcf_m),
+}, index=years_mdkb)
 
 # ------------------------
 # FUNCTIONS
@@ -121,8 +154,8 @@ def irr_bisection(cashflows, low=-0.9999, high=10.0, max_iter=200, tol=1e-8):
 
 def adjust_instalments_absolute_deduction(base, deduction):
     """
-    Adjust instalments by absolute deduction (tail-first). Keeps negative outflows
-    (as negatives). Used for FCF-IRR cashflows (schedule realism).
+    PSS-only: Adjust instalments by absolute deduction (tail-first).
+    Returns dict {year: -outflow}.
     """
     total = sum(a for _, a in base)
     deduction = min(max(deduction, 0.0), total)
@@ -139,12 +172,54 @@ def adjust_instalments_absolute_deduction(base, deduction):
 # ------------------------
 # UI HEADER
 # ------------------------
-st.title("💼 Power Service Solutions GmbH — DCF & WACC Model")
 display_name = USER_NAMES.get(st.session_state["user"], st.session_state["user"])
 login_time = dt.datetime.now().strftime("%H:%M")
+st.title("💼 Corporate Valuation — DCF & WACC")
 st.markdown(f"👤 Logged in as **{display_name}** | Session started at **{login_time}**")
 
-st.subheader("Excel Extract — Key Lines (FY 2025–2029)")
+# ------------------------
+# SIDEBAR — company + assumptions
+# ------------------------
+company = st.sidebar.selectbox("Select Company", ["PSS", "MDKB"])
+
+st.sidebar.header("Capital & Risk Assumptions")
+rf = st.sidebar.number_input("Risk-free rate (Rf)", value=0.027, step=0.001, format="%.4f")
+mrp = st.sidebar.number_input("Market risk premium (MRP)", value=0.04, step=0.001, format="%.4f")
+beta = st.sidebar.number_input("Equity beta (β)", value=1.2, step=0.05, format="%.2f")
+tax = st.sidebar.number_input("Tax rate (T)", value=0.30, step=0.01, format="%.2f")
+g = st.sidebar.number_input("Terminal growth (g)", value=0.02, step=0.001, format="%.4f")
+
+st.sidebar.markdown("---")
+st.sidebar.header("Operational Assumptions")
+dep_pct = st.sidebar.number_input("Depreciation % of Sales", value=0.01, step=0.001, format="%.4f")
+capex_pct = st.sidebar.number_input("CapEx % of Sales", value=0.01, step=0.001, format="%.4f")
+use_nwc = st.sidebar.checkbox("Include ΔNWC adjustment (only used if FCF not provided)", value=True)
+nwc_pct = 0.10
+if use_nwc:
+    nwc_pct = st.sidebar.number_input("ΔNWC % of ΔSales", value=0.10, step=0.005, format="%.4f")
+sales_growth = st.sidebar.number_input("Sales growth for last year (if needed)", value=0.02, step=0.005, format="%.4f")
+
+st.sidebar.markdown("---")
+st.sidebar.header("Debt & Financing")
+debt_amount = st.sidebar.number_input("Debt (€)", value=0.0, step=1_000_000.0, format="%.2f")
+rd = st.sidebar.number_input("Cost of Debt (Rd)", value=0.04, step=0.005, format="%.4f")
+
+st.sidebar.markdown("---")
+st.sidebar.header("Acquisition & IRR Settings")
+assumed_price_mdkb = st.sidebar.number_input("Assumed Price for MDKB (€)", value=0.0, step=100_000.0, format="%.0f")
+
+# ------------------------
+# PICK DATAFRAME BY COMPANY
+# ------------------------
+if company == "PSS":
+    df_base = df_pss.copy()
+    title_company = "Power Service Solutions GmbH (PSS)"
+else:
+    df_base = df_mdkb.copy()
+    title_company = "MDKB GmbH"
+
+years = list(df_base.index)
+st.subheader(f"Excel Extract — Key Lines ({years[0]}–{years[-1]}) — {title_company}")
 st.dataframe(
     df_base.style.format({
         "Sales_kEUR": "{:,.0f}",
@@ -158,67 +233,40 @@ st.dataframe(
 )
 
 # ------------------------
-# SIDEBAR INPUTS
-# ------------------------
-st.sidebar.header("Capital & Risk Assumptions")
-rf = st.sidebar.number_input("Risk-free rate (Rf)", value=0.027, step=0.001, format="%.4f")
-mrp = st.sidebar.number_input("Market risk premium (MRP)", value=0.04, step=0.001, format="%.4f")
-beta = st.sidebar.number_input("Equity beta (β)", value=1.2, step=0.05, format="%.2f")
-tax = st.sidebar.number_input("Tax rate (T)", value=0.30, step=0.01, format="%.2f")
-g = st.sidebar.number_input("Terminal growth (g)", value=0.02, step=0.001, format="%.4f")
-
-st.sidebar.markdown("---")
-st.sidebar.header("Operational Assumptions")
-dep_pct = st.sidebar.number_input("Depreciation % of Sales", value=0.01, step=0.001, format="%.4f")
-capex_pct = st.sidebar.number_input("CapEx % of Sales", value=0.01, step=0.001, format="%.4f")
-use_nwc = st.sidebar.checkbox("Include ΔNWC adjustment", value=True)
-nwc_pct = 0.10
-if use_nwc:
-    nwc_pct = st.sidebar.number_input("ΔNWC % of ΔSales", value=0.10, step=0.005, format="%.4f")
-sales_growth = st.sidebar.number_input("Sales growth for 2029", value=0.02, step=0.005, format="%.4f")
-
-st.sidebar.markdown("---")
-st.sidebar.header("Debt & Financing")
-debt_amount = st.sidebar.number_input("Debt (€)", value=0.0, step=1_000_000.0, format="%.2f")
-rd = st.sidebar.number_input("Cost of Debt (Rd)", value=0.04, step=0.005, format="%.4f")
-
-st.sidebar.markdown("---")
-st.sidebar.header("Acquisition & IRR Settings")
-assumed_price_mdkb = st.sidebar.number_input(
-    "Assumed Price for MDKB (€)",
-    value=0.0, step=100_000.0, format="%.0f"
-)
-
-# ------------------------
 # DCF CALCULATIONS
 # ------------------------
-E = df_base["Equity_kEUR"].iloc[-1] * 1000
+E = (df_base["Equity_kEUR"].dropna().iloc[-1]) * 1000  # EUR
 D = debt_amount
 Re = capm_cost_equity(rf, mrp, beta)
 WACC = compute_wacc(E, D, Re, rd, tax)
 
-sales_eur = df_base["Sales_kEUR"].values * 1000
-ebit_eur  = df_base["EBIT_kEUR"].values * 1000
-net_eur   = df_base["Net_kEUR"].values * 1000
+sales_eur = (df_base["Sales_kEUR"].values * 1000).astype(float)
+ebit_eur  = (df_base["EBIT_kEUR"].values  * 1000).astype(float)
+net_eur   = (df_base["Net_kEUR"].values   * 1000).astype(float)
 
+# If FCF series provided, use it directly; otherwise build from assumptions
+fcf_col = df_base["FCF_kEUR"].values
+has_fcf = not np.isnan(fcf_col.astype(float)).all()
 fcfs = []
-for i, y in enumerate(years):
-    s = sales_eur[i]
-    prev_s = sales_eur[i - 1] if i > 0 else s
-    e = ebit_eur[i]
-    dep = s * dep_pct
-    capex = s * capex_pct
-    dNWC = (s - prev_s) * nwc_pct if (use_nwc and i > 0) else 0
-    fcf = (e * (1 - tax)) + dep - capex - dNWC
-    if y == 2029:
-        fcf = df_base.loc[y, "FCF_kEUR"] * 1000
-    fcfs.append(fcf)
 
-cash = df_base.loc[2029, "Cash_kEUR"] * 1000
+if has_fcf:
+    fcfs = (fcf_col * 1000).astype(float).tolist()
+else:
+    for i, y in enumerate(years):
+        s = sales_eur[i]
+        prev_s = sales_eur[i - 1] if i > 0 else s
+        e = ebit_eur[i]
+        dep = s * dep_pct
+        capex = s * capex_pct
+        dNWC = (s - prev_s) * nwc_pct if (use_nwc and i > 0) else 0.0
+        fcf = (e * (1 - tax)) + dep - capex - dNWC
+        fcfs.append(fcf)
+
+cash = float(df_base["Cash_kEUR"].dropna().iloc[-1] * 1000)
 pv_fcfs = pv(fcfs, WACC)
 tv = fcfs[-1] * (1 + g) / (WACC - g) if WACC > g else np.nan
-pv_tv = tv / ((1 + WACC) ** len(fcfs)) if not np.isnan(tv) else 0
-EV = sum(pv_fcfs) + pv_tv
+pv_tv = tv / ((1 + WACC) ** len(fcfs)) if not np.isnan(tv) else 0.0
+EV = float(sum(pv_fcfs) + pv_tv)
 equity_value = EV + cash - D
 
 # ------------------------
@@ -242,15 +290,15 @@ df_results = pd.DataFrame({
     "FCF (€)": fcfs,
     "PV(FCF)": pv_fcfs,
 })
-st.subheader("DCF Inputs & Results (FY 2025–2029)")
+st.subheader(f"DCF Inputs & Results ({years[0]}–{years[-1]}) — {title_company}")
 st.dataframe(df_results.style.format("€{:,.0f}"), use_container_width=True)
 
-fig = plt.figure(figsize=( nine := 9 , four := 4.5 ))  # keep size stable
+fig = plt.figure(figsize=(9, 4.5))
 plt.plot(years, fcfs, "o-", label="FCF (€)")
 plt.plot(years, pv_fcfs, "o-", label="PV(FCF)")
 plt.axhline(0, color="gray", lw=0.8)
 plt.legend()
-plt.title("Free Cash Flow and Present Value (FY 2025–2029)")
+plt.title(f"Free Cash Flow and Present Value ({years[0]}–{years[-1]}) — {company}")
 plt.xlabel("Year")
 plt.ylabel("EUR")
 st.pyplot(fig)
@@ -260,66 +308,98 @@ st.pyplot(fig)
 # ------------------------
 st.subheader("💰 Internal Rate of Return (IRR) Analysis")
 
-# --- SPA Instalments schedule
-base_instalments = [
-    (2025, 500_000),
-    (2026, 2_500_000),
-    (2027, 3_500_000),
-    (2028, 6_800_000)
-]
-adjusted_outflows, total_purchase_price = adjust_instalments_absolute_deduction(
-    base_instalments, assumed_price_mdkb
-)
-
-# --- IRR 1: FCF-based
-irr_cash_flows = []
 irr_rows = []
-for i, y in enumerate(years):
-    instal = adjusted_outflows.get(y, 0.0)  # negative or zero
-    inflow = fcfs[i] + (tv if y == 2029 and not np.isnan(tv) else 0.0)
-    net_cf = instal + inflow
-    irr_cash_flows.append(net_cf)
-    irr_rows.append([y, instal, fcfs[i], (tv if y == 2029 else 0.0), net_cf])
-IRR_fcf = irr_bisection(irr_cash_flows)
-
-# --- IRR 2: Net Profit-based (equity-style IRR)
-# Treat effective price paid (SPA total − MDKB deduction) as initial outflow at 2025
-effective_price_paid = max(total_purchase_price - assumed_price_mdkb, 0.0)
-irr_cash_flows_net = []
 irr_rows_net = []
-for i, y in enumerate(years):
-    outflow = -effective_price_paid if i == 0 else 0.0  # single negative in 2025
-    inflow = net_eur[i] + (tv if y == 2029 and not np.isnan(tv) else 0.0)
-    net_cf = outflow + inflow
-    irr_cash_flows_net.append(net_cf)
-    irr_rows_net.append([y, outflow, net_eur[i], (tv if y == 2029 else 0.0), net_cf])
+
+if company == "PSS":
+    # PSS logic (unchanged): SPA schedule with MDKB deduction applied tail-first
+    base_instalments = [
+        (years_pss[0], 500_000),
+        (years_pss[1], 2_500_000),
+        (years_pss[2], 3_500_000),
+        (years_pss[3], 6_800_000)
+    ]
+    adjusted_outflows, total_purchase_price = adjust_instalments_absolute_deduction(
+        base_instalments, assumed_price_mdkb
+    )
+    irr_cash_flows = []
+    for i, y in enumerate(years):
+        instal = adjusted_outflows.get(y, 0.0)  # negative or zero
+        inflow = fcfs[i] + (tv if (i == len(years)-1 and not np.isnan(tv)) else 0.0)
+        net_cf = instal + inflow
+        irr_cash_flows.append(net_cf)
+        irr_rows.append([y, instal, fcfs[i], (tv if i == len(years)-1 else 0.0), net_cf])
+
+    # Net-profit IRR (equity-style) using effective SPA price after deduction at t0
+    effective_price_paid = max(total_purchase_price - assumed_price_mdkb, 0.0)
+    irr_cash_flows_net = []
+    for i, y in enumerate(years):
+        outflow = -effective_price_paid if i == 0 else 0.0
+        inflow = net_eur[i] + (tv if (i == len(years)-1 and not np.isnan(tv)) else 0.0)
+        net_cf = outflow + inflow
+        irr_cash_flows_net.append(net_cf)
+        irr_rows_net.append([y, outflow, net_eur[i], (tv if i == len(years)-1 else 0.0), net_cf])
+
+else:
+    # MDKB logic (inverted): user-imputed price is the initial outflow at t0; no SPA adjustment
+    initial_outflow = -float(assumed_price_mdkb)
+    irr_cash_flows = []
+    for i, y in enumerate(years):
+        outflow = initial_outflow if i == 0 else 0.0
+        inflow = fcfs[i] + (tv if (i == len(years)-1 and not np.isnan(tv)) else 0.0)
+        net_cf = outflow + inflow
+        irr_cash_flows.append(net_cf)
+        irr_rows.append([y, outflow, fcfs[i], (tv if i == len(years)-1 else 0.0), net_cf])
+
+    # Net-profit IRR (equity-style) with the same initial outflow, inflows = Net + TV
+    irr_cash_flows_net = []
+    for i, y in enumerate(years):
+        outflow = initial_outflow if i == 0 else 0.0
+        inflow = net_eur[i] + (tv if (i == len(years)-1 and not np.isnan(tv)) else 0.0)
+        net_cf = outflow + inflow
+        irr_cash_flows_net.append(net_cf)
+        irr_rows_net.append([y, outflow, net_eur[i], (tv if i == len(years)-1 else 0.0), net_cf])
+
+    effective_price_paid = float(assumed_price_mdkb)  # for reporting symmetry
+
+IRR_fcf = irr_bisection(irr_cash_flows)
 IRR_net = irr_bisection(irr_cash_flows_net)
 
-# --- Display both IRRs side by side
+# Display both IRRs
 col1, col2 = st.columns(2)
 col1.metric("IRR (FCF-based)", f"{IRR_fcf*100:.2f}%" if not np.isnan(IRR_fcf) else "N/A")
 col2.metric("IRR (Net Profit-based)", f"{IRR_net*100:.2f}%" if not np.isnan(IRR_net) else "N/A")
 
-# --- Bar chart comparison
+# Bar chart comparison
 fig_irr = plt.figure(figsize=(5.5, 4))
-plt.bar(["FCF-based", "Net Profit-based"], [IRR_fcf*100, IRR_net*100], color=["#0073e6", "#00b386"])
+vals = [IRR_fcf*100 if not np.isnan(IRR_fcf) else np.nan,
+        IRR_net*100 if not np.isnan(IRR_net) else np.nan]
+plt.bar(["FCF-based", "Net Profit-based"], vals)
 plt.ylabel("IRR (%)")
-plt.title("IRR Comparison")
-for i, val in enumerate([IRR_fcf*100, IRR_net*100]):
+plt.title(f"IRR Comparison — {company}")
+for i, val in enumerate(vals):
     if not np.isnan(val):
         plt.text(i, val + 0.5, f"{val:.2f}%", ha="center", fontsize=10)
 st.pyplot(fig_irr)
 
-# --- IRR Cash Flow Tables
-st.markdown("#### IRR Cash Flows (FCF-based)")
-df_irr = pd.DataFrame(
-    irr_rows,
-    columns=["Year", "Instalment (outflow)", "FCF (inflow)", "Terminal Value (inflow)", "Net CF for IRR"]
-)
+# IRR Cash Flow Tables
+if company == "PSS":
+    st.markdown("#### IRR Cash Flows (FCF-based) — PSS")
+    df_irr = pd.DataFrame(
+        irr_rows,
+        columns=["Year", "Instalment (outflow)", "FCF (inflow)", "Terminal Value (inflow)", "Net CF for IRR"]
+    )
+else:
+    st.markdown("#### IRR Cash Flows (FCF-based) — MDKB")
+    df_irr = pd.DataFrame(
+        irr_rows,
+        columns=["Year", "Initial Outflow (t0)", "FCF (inflow)", "Terminal Value (inflow)", "Net CF for IRR"]
+    )
+
 st.dataframe(
     df_irr.style.format({
-        "Instalment (outflow)": "€{:,.0f}",
-        "FCF (inflow)": "€{:,.0f}",
+        df_irr.columns[1]: "€{:,.0f}",
+        df_irr.columns[2]: "€{:,.0f}",
         "Terminal Value (inflow)": "€{:,.0f}",
         "Net CF for IRR": "€{:,.0f}",
     }),
@@ -329,18 +409,18 @@ st.dataframe(
 st.markdown("#### IRR Cash Flows (Net Profit-based)")
 df_irr_net = pd.DataFrame(
     irr_rows_net,
-    columns=["Year", "Outflow @2025 (effective price)", "Net Profit (inflow)", "Terminal Value (inflow)", "Net CF for IRR"]
+    columns=["Year", "Initial Outflow (t0)" if company=="MDKB" else "Outflow @t0 (effective price)",
+             "Net Profit (inflow)", "Terminal Value (inflow)", "Net CF for IRR"]
 )
 st.dataframe(
     df_irr_net.style.format({
-        "Outflow @2025 (effective price)": "€{:,.0f}",
+        df_irr_net.columns[1]: "€{:,.0f}",
         "Net Profit (inflow)": "€{:,.0f}",
         "Terminal Value (inflow)": "€{:,.0f}",
         "Net CF for IRR": "€{:,.0f}",
     }),
     use_container_width=True,
 )
-
 
 # ------------------------
 # SENSITIVITY MATRIX
@@ -368,23 +448,23 @@ st.info("Choose how to export your results to local folder or browser.")
 
 if st.button("💾 Export locally"):
     out = ts_folder(RESULTS_DIR)
-    df_results.to_csv(os.path.join(out, "valuation_summary.csv"), index=False)
-    df_sens.to_csv(os.path.join(out, "sensitivity_matrix.csv"))
-    df_irr.to_csv(os.path.join(out, "irr_cashflows_fcf.csv"), index=False)
-    df_irr_net.to_csv(os.path.join(out, "irr_cashflows_netprofit.csv"), index=False)
-    with open(os.path.join(out, "assumptions.json"), "w") as f:
+    df_results.to_csv(os.path.join(out, f"{company}_valuation_summary.csv"), index=False)
+    df_sens.to_csv(os.path.join(out, f"{company}_sensitivity_matrix.csv"))
+    df_irr.to_csv(os.path.join(out, f"{company}_irr_cashflows_fcf.csv"), index=False)
+    df_irr_net.to_csv(os.path.join(out, f"{company}_irr_cashflows_netprofit.csv"), index=False)
+    with open(os.path.join(out, f"{company}_assumptions.json"), "w") as f:
         json.dump({
+            "company": company,
             "rf": rf, "mrp": mrp, "beta": beta, "Re": Re, "Rd": rd, "tax": tax,
             "g": g, "dep_pct": dep_pct, "capex_pct": capex_pct, "use_nwc": use_nwc,
             "nwc_pct": nwc_pct, "debt": D, "EV": EV, "EquityValue": equity_value,
             "WACC": WACC, "fcf": fcfs, "pv_fcfs": pv_fcfs, "tv": tv, "pv_tv": pv_tv,
             "IRR_FCF": IRR_fcf, "IRR_NetProfit": IRR_net,
             "assumed_price_mdkb": assumed_price_mdkb,
-            "effective_price_paid": effective_price_paid,
-            "adjusted_instalments": adjusted_outflows
+            "effective_price_paid": float(effective_price_paid) if 'effective_price_paid' in locals() else None,
         }, f, indent=2)
-    fig.savefig(os.path.join(out, "DCF_chart.png"), dpi=150, bbox_inches="tight")
-    fig_irr.savefig(os.path.join(out, "IRR_chart.png"), dpi=150, bbox_inches="tight")
+    fig.savefig(os.path.join(out, f"{company}_DCF_chart.png"), dpi=150, bbox_inches="tight")
+    fig_irr.savefig(os.path.join(out, f"{company}_IRR_chart.png"), dpi=150, bbox_inches="tight")
     st.success(f"✅ Exported locally to: {out}")
 
 # Browser export
@@ -402,48 +482,53 @@ with pd.ExcelWriter(excel_buffer, engine="xlsxwriter") as writer:
     df_irr.to_excel(writer, sheet_name="IRR_FCF", index=False)
     df_irr_net.to_excel(writer, sheet_name="IRR_NetProfit", index=False)
     pd.DataFrame({
-        "Metric": ["EV", "Equity Value", "IRR (FCF)", "IRR (Net Profit)", "WACC", "Re", "Rd", "Effective Price Paid", "MDKB Assumption"],
-        "Value": [EV, equity_value, IRR_fcf, IRR_net, WACC, Re, rd, effective_price_paid, assumed_price_mdkb]
+        "Metric": ["Company","EV", "Equity Value", "IRR (FCF)", "IRR (Net Profit)", "WACC", "Re", "Rd",
+                   "Effective Price Paid / t0 Outflow", "MDKB Assumption"],
+        "Value": [company, EV, equity_value, IRR_fcf, IRR_net, WACC, Re, rd,
+                  float(effective_price_paid) if 'effective_price_paid' in locals() else float(assumed_price_mdkb),
+                  float(assumed_price_mdkb)]
     }).to_excel(writer, sheet_name="Summary", index=False)
 excel_buffer.seek(0)
 
+prefix = company
+
 if "Summary CSV" in option:
     st.download_button(
-        label="Download Summary CSV",
+        label=f"Download {prefix} Summary CSV",
         data=df_results.to_csv(index=False).encode(),
-        file_name="PSS_Valuation_Summary.csv",
+        file_name=f"{prefix}_Valuation_Summary.csv",
         mime="text/csv"
     )
 
 if "Sensitivity CSV" in option:
     st.download_button(
-        label="Download Sensitivity CSV",
+        label=f"Download {prefix} Sensitivity CSV",
         data=df_sens.to_csv().encode(),
-        file_name="PSS_Sensitivity_Matrix.csv",
+        file_name=f"{prefix}_Sensitivity_Matrix.csv",
         mime="text/csv"
     )
 
 if "IRR FCF CSV" in option:
     st.download_button(
-        label="Download IRR Cash Flows (FCF) CSV",
+        label=f"Download {prefix} IRR Cash Flows (FCF) CSV",
         data=df_irr.to_csv(index=False).encode(),
-        file_name="PSS_IRR_Cashflows_FCF.csv",
+        file_name=f"{prefix}_IRR_Cashflows_FCF.csv",
         mime="text/csv"
     )
 
 if "IRR Net CSV" in option:
     st.download_button(
-        label="Download IRR Cash Flows (Net Profit) CSV",
+        label=f"Download {prefix} IRR Cash Flows (Net Profit) CSV",
         data=df_irr_net.to_csv(index=False).encode(),
-        file_name="PSS_IRR_Cashflows_NetProfit.csv",
+        file_name=f"{prefix}_IRR_Cashflows_NetProfit.csv",
         mime="text/csv"
     )
 
 if "Excel (Full Report)" in option:
     st.download_button(
-        label="Download Excel Report",
+        label=f"Download {prefix} Excel Report",
         data=excel_buffer,
-        file_name=f"PSS_Valuation_Report_{dt.datetime.now().strftime('%Y%m%d')}.xlsx",
+        file_name=f"{prefix}_Valuation_Report_{dt.datetime.now().strftime('%Y%m%d')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
@@ -454,6 +539,6 @@ if "Charts (PNG)" in option:
     tmpfile2 = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
     fig_irr.savefig(tmpfile2.name, dpi=150, bbox_inches="tight")
     with open(tmpfile1.name, "rb") as f1:
-        st.download_button("Download DCF Chart (PNG)", data=f1, file_name="DCF_Chart.png", mime="image/png")
+        st.download_button(f"Download {prefix} DCF Chart (PNG)", data=f1, file_name=f"{prefix}_DCF_Chart.png", mime="image/png")
     with open(tmpfile2.name, "rb") as f2:
-        st.download_button("Download IRR Chart (PNG)", data=f2, file_name="IRR_Chart.png", mime="image/png")
+        st.download_button(f"Download {prefix} IRR Chart (PNG)", data=f2, file_name=f"{prefix}_IRR_Chart.png", mime="image/png")
