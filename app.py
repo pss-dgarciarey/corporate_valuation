@@ -1,5 +1,5 @@
 # ===============================================================
-# Multi-Company DCF + WACC Valuation App (PSS & MDKB) — Dynamic v3
+# Multi-Company DCF + WACC Valuation App (PSS & MDKB) — Dynamic v5 (hardcoded scenarios)
 # ===============================================================
 
 import os, io, json, datetime as dt
@@ -59,25 +59,32 @@ def ts_folder(root):
     return path
 
 # ------------------------
-# BASE DATA
+# BASE DATA (B = current mid-term)
 # ------------------------
 years_pss = [2025, 2026, 2027, 2028, 2029]
-df_pss = pd.DataFrame({
+df_pss_B = pd.DataFrame({
     "Sales_kEUR": [55650, 92408, 113161, 120765, 123180],
-    "EBIT_kEUR":  [600, 2106, 5237, 7456, 7641],
-    "Net_kEUR":   [535, 2135, 4845, 5218, 5322],
-    "Equity_kEUR":[12596, 14731, 19219, 24750, 25850],
-    "Cash_kEUR":  [8176, 11205, 20394, 28367, 36000],
-    "FCF_kEUR":   [-6884, 2749, 9054, 7716, 5322],
+    "EBIT_kEUR":  [  600,  2106,   5237,   7456,   7641],
+    "Net_kEUR":   [  535,  2135,   4845,   5218,   5322],
+    "Equity_kEUR":[12596, 14731,  19219,  24750,  25850],
+    "Cash_kEUR":  [ 8176, 11205,  20394,  28367,  36000],
+    "FCF_kEUR":   [-6884,  2749,   9054,   7716,   5322],
 }, index=years_pss)
 
+# ---- Placeholders for future hardcoded alternatives (send me values later) ----
+# Set to a full DataFrame with the same columns to override generation.
+df_pss_A_hardcoded = None   # If provided later, scenario A will use this instead of B
+df_pss_C_hardcoded = None   # If provided later, scenario C will use this instead of generator
+df_pss_D_hardcoded = None   # If provided later, scenario D will use this instead of generator
+
+# MDKB inputs (unchanged)
 sales_m_25_28 = [13.7, 11.7, 12.0, 12.3]
-ebit_m_25_28  = [0.8, 0.9, 1.0, 1.0]
-net_m_25_28   = [0.6, 0.7, 0.7, 0.7]
-fcf_m_25_28   = [-0.7, 0.3, 0.4, 0.4]
-cash_m_25_28  = [2.2, 2.5, 2.9, 3.3]
+ebit_m_25_28  = [0.8,  0.9,  1.0,  1.0]
+net_m_25_28   = [0.6,  0.7,  0.7,  0.7]
+fcf_m_25_28   = [-0.7, 0.3,  0.4,  0.4]
+cash_m_25_28  = [2.2,  2.5,  2.9,  3.3]
 equity_m_25_29 = [12.1, 12.6, 13.3, 14.0, 14.6]
-nwc_m_25_29    = [5.5, 6.4, 6.4, 6.3, 6.2]
+nwc_m_25_29    = [5.5,  6.4,  6.4,  6.3,  6.2]
 def m_to_k(seq): return [int(round(v*1000)) for v in seq]
 
 # ------------------------
@@ -100,12 +107,57 @@ def irr_bisection(c,low=-0.9999,high=10,tol=1e-8,max_iter=200):
         if fl*fm<0: high,fh=mid,fm
         else: low,fl=mid,fm
     return mid
+
 def adjust_instalments_absolute_deduction(base,ded):
     total=sum(a for _,a in base)
     ded=min(max(ded,0),total); rem=ded; adj=[]
     for y,a in reversed(base):
         cut=min(a,rem); adj.append((y,-(a-cut))); rem-=cut
     return dict(sorted(adj)), total
+
+# ---- Scenario helpers (PSS) ----
+def build_pss_cagr_scenario(
+    sales_2025_kEUR: int,
+    cagr: float,                 # e.g., 0.15 or 0.25
+    ebit_pct_series,             # list length 5 aligned to years 2025..2029
+    net_pct_series,              # list length 5 aligned to years 2025..2029
+    dep_pct, capex_pct, tax, use_nwc, nwc_pct,
+    cash0_kEUR: int, equity0_kEUR: int,
+    years: list[int]
+) -> pd.DataFrame:
+    # Sales path from constant CAGR
+    sales_k = [int(round(sales_2025_kEUR))]
+    for _ in range(1, len(years)):
+        sales_k.append(int(round(sales_k[-1] * (1.0 + cagr))))
+    # EBIT/Net via margin profile
+    ebit_k = [int(round(sales_k[i]*ebit_pct_series[i])) for i in range(len(years))]
+    net_k  = [int(round(sales_k[i]*net_pct_series[i]))  for i in range(len(years))]
+    # FCF from drivers (EUR) -> kEUR
+    fcfs_k = []
+    for i in range(len(years)):
+        s_eur = sales_k[i]*1000.0
+        prev_eur = sales_k[i-1]*1000.0 if i>0 else s_eur
+        e_eur = ebit_k[i]*1000.0
+        dep_eur = s_eur*dep_pct
+        capex_eur = s_eur*capex_pct
+        dNWC_eur = (s_eur - prev_eur)*nwc_pct if (use_nwc and i>0) else 0.0
+        fcf_eur = e_eur*(1.0-tax) + dep_eur - capex_eur - dNWC_eur
+        fcfs_k.append(int(round(fcf_eur/1000.0)))
+    # Cash & Equity roll-forward (simple)
+    cash_k   = [int(round(cash0_kEUR))]
+    equity_k = [int(round(equity0_kEUR))]
+    for i in range(1, len(years)):
+        cash_k.append(int(round(cash_k[i-1] + fcfs_k[i-1])))
+        equity_k.append(int(round(equity_k[i-1] + net_k[i-1])))
+    df = pd.DataFrame({
+        "Sales_kEUR":  sales_k,
+        "EBIT_kEUR":   ebit_k,
+        "Net_kEUR":    net_k,
+        "Equity_kEUR": equity_k,
+        "Cash_kEUR":   cash_k,
+        "FCF_kEUR":    fcfs_k,
+    }, index=years)
+    return df
 
 # ------------------------
 # SIDEBAR
@@ -115,25 +167,25 @@ company = st.sidebar.selectbox("**Select Company**", ["PSS", "MDKB"])
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### **Capital & Risk Assumptions**")
-rf   = st.sidebar.number_input("Risk-free rate",        value=0.027, step=0.001, format="%.3f")
-mrp  = st.sidebar.number_input("Market risk premium",   value=0.040, step=0.001, format="%.3f")
-beta = st.sidebar.number_input("Beta",                  value=1.200, step=0.001, format="%.3f")
-tax  = st.sidebar.number_input("Tax rate",              value=0.300, step=0.001, format="%.3f")
-g    = st.sidebar.number_input("Terminal growth (g)",   value=0.020, step=0.001, format="%.3f")
+rf   = st.sidebar.number_input("Risk-free rate",        value=0.0270, step=0.0001, format="%.4f")
+mrp  = st.sidebar.number_input("Market risk premium",   value=0.0400, step=0.0001, format="%.4f")
+beta = st.sidebar.number_input("Beta",                  value=1.2000, step=0.0001, format="%.4f")
+tax  = st.sidebar.number_input("Tax rate",              value=0.3000, step=0.0001, format="%.4f")
+g    = st.sidebar.number_input("Terminal growth (g)",   value=0.0200, step=0.0001, format="%.4f")
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### **Operational Assumptions**")
-dep_pct   = st.sidebar.number_input("Depreciation % of Sales", value=0.010, step=0.001, format="%.3f")
-capex_pct = st.sidebar.number_input("CapEx % of Sales",        value=0.010, step=0.001, format="%.3f")
+dep_pct   = st.sidebar.number_input("Depreciation % of Sales", value=0.0100, step=0.0001, format="%.4f")
+capex_pct = st.sidebar.number_input("CapEx % of Sales",        value=0.0100, step=0.0001, format="%.4f")
 use_nwc   = st.sidebar.checkbox("Include ΔNWC adjustment", value=True)
-default_nwc = -0.410 if company=="MDKB" else 0.100
-nwc_pct   = st.sidebar.number_input("ΔNWC % of ΔSales", value=float(default_nwc), step=0.001, format="%.3f")
-mdkb_extend_growth = st.sidebar.number_input("MDKB 2029 growth", value=0.020, step=0.001, format="%.3f")
+default_nwc = -0.4100 if company=="MDKB" else 0.1000
+nwc_pct   = st.sidebar.number_input("ΔNWC % of ΔSales", value=float(default_nwc), step=0.0001, format="%.4f")
+mdkb_extend_growth = st.sidebar.number_input("MDKB 2029 growth", value=0.0200, step=0.0001, format="%.4f")
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### **Debt & Financing**")
 debt = st.sidebar.number_input("Debt (€)", value=0.0, step=1_000_000.0)
-rd   = st.sidebar.number_input("Cost of Debt (Rd)", value=0.040, step=0.001, format="%.3f")
+rd   = st.sidebar.number_input("Cost of Debt (Rd)", value=0.0400, step=0.0001, format="%.4f")
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### **Acquisition & IRR Settings**")
@@ -147,12 +199,78 @@ fcf_source = st.sidebar.radio(
     index=0 if company=="PSS" else 1
 )
 
+# ---- PSS Scenario Selector (hardcoded) ----
+pss_scenario = "B) Current Mid-term (default)"
+if company == "PSS":
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### **PSS Scenario**")
+    pss_scenario = st.sidebar.selectbox(
+        "Select PSS Scenario",
+        ["A) Initial forecast (same as B for now)",
+         "B) Current Mid-term (default)",
+         "C) 55m in 2025, CAGR 15% to 2029",
+         "D) 55m in 2025, CAGR 25% to 2029"]
+    )
+
 # ------------------------
 # DATA PREP
 # ------------------------
 if company=="PSS":
-    df=df_pss.copy(); title="Power Service Solutions GmbH (PSS)"
+    title="Power Service Solutions GmbH (PSS)"
+    years = years_pss
+
+    # Margin profiles from B (keeps logic consistent across scenarios)
+    ebit_pct_B = (df_pss_B["EBIT_kEUR"]/df_pss_B["Sales_kEUR"]).tolist()
+    net_pct_B  = (df_pss_B["Net_kEUR"]/df_pss_B["Sales_kEUR"]).tolist()
+
+    scenario_code = pss_scenario[:1]  # 'A'/'B'/'C'/'D'
+
+    if scenario_code == "A":
+        # A uses the same data as B unless you later paste hardcoded A
+        if isinstance(df_pss_A_hardcoded, pd.DataFrame):
+            df = df_pss_A_hardcoded.copy()
+        else:
+            df = df_pss_B.copy()
+
+    elif scenario_code == "B":
+        df = df_pss_B.copy()
+
+    elif scenario_code == "C":
+        if isinstance(df_pss_C_hardcoded, pd.DataFrame):
+            df = df_pss_C_hardcoded.copy()
+        else:
+            # C = 55m in 2025, CAGR 15%
+            df = build_pss_cagr_scenario(
+                sales_2025_kEUR=55000,
+                cagr=0.15,
+                ebit_pct_series=ebit_pct_B,
+                net_pct_series=net_pct_B,
+                dep_pct=dep_pct, capex_pct=capex_pct, tax=tax,
+                use_nwc=use_nwc, nwc_pct=nwc_pct,
+                cash0_kEUR=int(df_pss_B.loc[2025,"Cash_kEUR"]),
+                equity0_kEUR=int(df_pss_B.loc[2025,"Equity_kEUR"]),
+                years=years_pss
+            )
+
+    else:  # "D"
+        if isinstance(df_pss_D_hardcoded, pd.DataFrame):
+            df = df_pss_D_hardcoded.copy()
+        else:
+            # D = 55m in 2025, CAGR 25%
+            df = build_pss_cagr_scenario(
+                sales_2025_kEUR=55000,
+                cagr=0.25,
+                ebit_pct_series=ebit_pct_B,
+                net_pct_series=net_pct_B,
+                dep_pct=dep_pct, capex_pct=capex_pct, tax=tax,
+                use_nwc=use_nwc, nwc_pct=nwc_pct,
+                cash0_kEUR=int(df_pss_B.loc[2025,"Cash_kEUR"]),
+                equity0_kEUR=int(df_pss_B.loc[2025,"Equity_kEUR"]),
+                years=years_pss
+            )
+
 else:
+    # MDKB (unchanged)
     s25_28,eb25_28,n25_28,fc25_28,c25_28=m_to_k(sales_m_25_28),m_to_k(ebit_m_25_28),m_to_k(net_m_25_28),m_to_k(fcf_m_25_28),m_to_k(cash_m_25_28)
     eq25_29,nwc25_29=m_to_k(equity_m_25_29),m_to_k(nwc_m_25_29)
     s28,eb28,n28,fc28,c28=s25_28[-1],eb25_28[-1],n25_28[-1],fc25_28[-1],c25_28[-1]
@@ -170,7 +288,7 @@ else:
         "NWC_kEUR":nwc25_29
     },index=[2025,2026,2027,2028,2029])
     title="MDKB GmbH"
-years=list(df.index)
+    years=list(df.index)
 
 # ------------------------
 # CALCULATIONS
@@ -181,6 +299,7 @@ sales_eur=(df["Sales_kEUR"].values*1000).astype(float)
 ebit_eur=(df["EBIT_kEUR"].values*1000).astype(float)
 net_eur=(df["Net_kEUR"].values*1000).astype(float)
 cash=df["Cash_kEUR"].iloc[-1]*1000
+years=list(df.index)
 
 if "Computed" in fcf_source:
     fcfs=[]
@@ -190,7 +309,11 @@ if "Computed" in fcf_source:
         dep=s*dep_pct; capex=s*capex_pct
         dNWC=(s-prev)*nwc_pct if (use_nwc and i>0) else 0
         fcf=(e*(1-tax))+dep-capex-dNWC
-        if company=="PSS" and y==2029: fcf=df.loc[y,"FCF_kEUR"]*1000
+        # Respect explicit plan value if present (e.g., original plan’s 2029)
+        if company=="PSS" and y==2029 and "FCF_kEUR" in df.columns and not pd.isna(df.loc[y,"FCF_kEUR"]):
+            plan_val = float(df.loc[y,"FCF_kEUR"])*1000.0
+            if abs(plan_val) > 0:
+                fcf = plan_val
         fcfs.append(fcf)
 else:
     # “Table” mode but responsive to assumptions
@@ -202,7 +325,6 @@ else:
         dep=s*dep_pct; capex=s*capex_pct
         dNWC=(s-prev)*nwc_pct if (use_nwc and i>0) else 0
         driver=(e*(1-tax))+dep-capex-dNWC
-        # Adjustment proportional to EBIT
         adj_fcf=base_fcfs[i]+0.1*(driver-(e*(1-tax)))
         adj.append(adj_fcf)
     fcfs=adj
@@ -216,7 +338,11 @@ EV=sum(pv_fcfs)+pv_tv;EqV=EV+cash-D
 # HEADER
 # ------------------------
 st.title("💼 Corporate Valuation — DCF & WACC")
-st.caption(f"Logged in as **{USER_NAMES.get(st.session_state['user'], st.session_state['user'])}** — {dt.datetime.now():%H:%M}")
+who = USER_NAMES.get(st.session_state['user'], st.session_state['user'])
+scenario_note = ""
+if company=="PSS":
+    scenario_note = f" | Scenario: **{pss_scenario}**"
+st.caption(f"Logged in as **{who}** — {dt.datetime.now():%H:%M}{scenario_note}")
 
 if "Computed" in fcf_source:
     st.success("The model is currently using **Computed Free Cash Flow (FCFF)**. "
@@ -273,7 +399,9 @@ col1,col2=st.columns(2)
 col1.metric("IRR (FCF)",f"{IRR_fcf*100:.2f}%" if not np.isnan(IRR_fcf) else "N/A")
 col2.metric("IRR (Net Profit)",f"{IRR_net*100:.2f}%" if not np.isnan(IRR_net) else "N/A")
 fig2=plt.figure(figsize=(5.5,4))
-plt.bar(["FCF","Net"],[IRR_fcf*100,IRR_net*100]);plt.ylabel("%");plt.title(f"IRR — {company}")
+plt.bar(["FCF","Net"],[IRR_fcf*100 if not np.isnan(IRR_fcf) else 0,
+                       IRR_net*100 if not np.isnan(IRR_net) else 0])
+plt.ylabel("%");plt.title(f"IRR — {company}")
 st.pyplot(fig2)
 
 # ------------------------
@@ -295,7 +423,14 @@ if st.button("💾 Export locally"):
     dfres.to_csv(os.path.join(out,"dcf_results.csv"),index=False)
     df_sens.to_csv(os.path.join(out,"sensitivity.csv"))
     with open(os.path.join(out,"assumptions.json"),"w") as f:
-        json.dump({"company":company,"FCF_source":fcf_source,"EV":EV,"Equity":EqV,"IRR_FCF":IRR_fcf,"IRR_Net":IRR_net},f,indent=2)
+        json.dump({
+            "company":company,
+            "scenario": (pss_scenario if company=="PSS" else "MDKB Base"),
+            "FCF_source":fcf_source,
+            "EV":EV,"Equity":EqV,
+            "IRR_FCF":IRR_fcf,"IRR_Net":IRR_net,
+            "WACC": WACC, "Re": Re, "Rd": rd
+        },f,indent=2)
     fig.savefig(os.path.join(out,"DCF_chart.png"),dpi=150,bbox_inches="tight")
     fig2.savefig(os.path.join(out,"IRR_chart.png"),dpi=150,bbox_inches="tight")
     st.success(f"✅ Exported locally to: {out}")
@@ -304,14 +439,18 @@ excel_buffer=io.BytesIO()
 with pd.ExcelWriter(excel_buffer,engine="xlsxwriter") as writer:
     dfres.to_excel(writer,sheet_name="DCF_Results",index=False)
     df_sens.to_excel(writer,sheet_name="Sensitivity",index=True)
+    # Charts
     workbook=writer.book
     ws1=workbook.add_worksheet("Chart_DCF"); ws2=workbook.add_worksheet("Chart_IRR")
     img1=io.BytesIO(); fig.savefig(img1,format="png",dpi=150); img1.seek(0)
     img2=io.BytesIO(); fig2.savefig(img2,format="png",dpi=150); img2.seek(0)
     ws1.insert_image("B2","DCF.png",{"image_data":img1})
     ws2.insert_image("B2","IRR.png",{"image_data":img2})
-    pd.DataFrame({"Metric":["Company","FCF Source","EV","Equity","IRR (FCF)","IRR (Net)","WACC","Re","Rd"],
-                  "Value":[company,fcf_source,EV,EqV,IRR_fcf,IRR_net,WACC,Re,rd]}).to_excel(writer,sheet_name="Summary",index=False)
+    # Summary
+    pd.DataFrame({
+        "Metric":["Company","Scenario","FCF Source","EV","Equity","IRR (FCF)","IRR (Net)","WACC","Re","Rd"],
+        "Value":[company, (pss_scenario if company=="PSS" else "MDKB Base"), fcf_source, EV, EqV, IRR_fcf, IRR_net, WACC, Re, rd]
+    }).to_excel(writer,sheet_name="Summary",index=False)
 excel_buffer.seek(0)
 st.download_button(label=f"⬇️ Download {company} Excel Report (with charts)",
                    data=excel_buffer,
