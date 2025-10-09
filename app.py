@@ -361,42 +361,94 @@ df_sens=pd.DataFrame(mt,index=[f"{w*100:.1f}%" for w in wr],columns=[f"{x*100:.1
 st.dataframe(df_sens.style.format("€{:,.0f}"),use_container_width=True)
 
 # ------------------------
-# EXPORT
+# EXPORT — Pretty Excel Output
 # ------------------------
-st.markdown("### 📦 Export Options")
-if st.button("💾 Export locally"):
-    out=ts_folder(RESULTS_DIR)
-    dfres.to_csv(os.path.join(out,"dcf_results.csv"),index=False)
-    df_sens.to_csv(os.path.join(out,"sensitivity.csv"))
-    with open(os.path.join(out,"assumptions.json"),"w") as f:
-        json.dump({
-            "company":company,
-            "scenario": (pss_scenario if company=="PSS" else "MDKB Base"),
-            "FCF_source":fcf_source,
-            "EV":EV,"Equity":EqV,
-            "IRR_FCF":IRR_fcf,"IRR_Net":IRR_net,
-            "WACC": WACC, "Re": Re, "Rd": rd
-        },f,indent=2)
-    fig.savefig(os.path.join(out,"DCF_chart.png"),dpi=150,bbox_inches="tight")
-    fig2.savefig(os.path.join(out,"IRR_chart.png"),dpi=150,bbox_inches="tight")
-    st.success(f"✅ Exported locally to: {out}")
+import xlsxwriter
 
-excel_buffer=io.BytesIO()
-with pd.ExcelWriter(excel_buffer,engine="xlsxwriter") as writer:
-    dfres.to_excel(writer,sheet_name="DCF_Results",index=False)
-    df_sens.to_excel(writer,sheet_name="Sensitivity",index=True)
-    workbook=writer.book
-    ws1=workbook.add_worksheet("Chart_DCF"); ws2=workbook.add_worksheet("Chart_IRR")
-    img1=io.BytesIO(); fig.savefig(img1,format="png",dpi=150); img1.seek(0)
-    img2=io.BytesIO(); fig2.savefig(img2,format="png",dpi=150); img2.seek(0)
-    ws1.insert_image("B2","DCF.png",{"image_data":img1})
-    ws2.insert_image("B2","IRR.png",{"image_data":img2})
-    pd.DataFrame({
-        "Metric":["Company","Scenario","FCF Source","EV","Equity","IRR (FCF)","IRR (Net)","WACC","Re","Rd"],
-        "Value":[company, (pss_scenario if company=="PSS" else "MDKB Base"), fcf_source, EV, EqV, IRR_fcf, IRR_net, WACC, Re, rd]
-    }).to_excel(writer,sheet_name="Summary",index=False)
-excel_buffer.seek(0)
-st.download_button(label=f"⬇️ Download {company} Excel Report (with charts)",
-                   data=excel_buffer,
-                   file_name=f"{company}_Valuation_Report_{dt.datetime.now():%Y%m%d}.xlsx",
-                   mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+st.markdown("### 📦 Export Options")
+
+if st.button("💾 Export locally (pretty Excel)"):
+    out = ts_folder(RESULTS_DIR)
+
+    # Create ExcelWriter with XlsxWriter engine
+    excel_path = os.path.join(out, f"{company}_Valuation_Report_{dt.datetime.now():%Y%m%d}.xlsx")
+    with pd.ExcelWriter(excel_path, engine="xlsxwriter") as writer:
+        workbook = writer.book
+
+        # ---------- FORMATS ----------
+        fmt_header = workbook.add_format({"bold": True, "bg_color": "#E1EAF5", "border": 1})
+        fmt_text = workbook.add_format({"border": 1, "align": "left"})
+        fmt_year = workbook.add_format({"num_format": "0", "border": 1, "align": "center"})
+        fmt_euro = workbook.add_format({"num_format": '€#,##0;[Red]-€#,##0', "border": 1})
+        fmt_euro0 = workbook.add_format({"num_format": '€#,##0', "border": 1})
+        fmt_percent = workbook.add_format({"num_format": "0.00%", "border": 1})
+        fmt_num = workbook.add_format({"num_format": "#,##0", "border": 1})
+        fmt_title = workbook.add_format({"bold": True, "font_size": 14})
+
+        # ---------- Sheet 1: DCF Results ----------
+        sheet1 = "DCF_Results"
+        dfres_export = dfres.copy()
+        dfres_export.to_excel(writer, sheet_name=sheet1, index=False, startrow=1)
+        ws = writer.sheets[sheet1]
+        ws.write(0, 0, f"DCF Results — {title} ({pss_scenario if company=='PSS' else 'Base'})", fmt_title)
+
+        # Header format
+        for col_num, value in enumerate(dfres_export.columns):
+            ws.write(1, col_num, value, fmt_header)
+        # Apply column formats
+        ws.set_column("A:A", 8, fmt_year)      # Year
+        ws.set_column("B:B", 20, fmt_euro)     # Sales
+        ws.set_column("C:D", 18, fmt_euro)     # EBIT / Net
+        ws.set_column("E:F", 18, fmt_euro)     # FCF / PV(FCF)
+
+        # ---------- Sheet 2: Sensitivity ----------
+        df_sens.to_excel(writer, sheet_name="Sensitivity", index=True, startrow=1)
+        ws2 = writer.sheets["Sensitivity"]
+        ws2.write(0, 0, "Sensitivity Table — EV by WACC & Terminal Growth", fmt_title)
+        for col_num, value in enumerate(df_sens.reset_index().columns):
+            ws2.write(1, col_num, value, fmt_header)
+        ws2.set_column(0, len(df_sens.columns), 15, fmt_euro0)
+
+        # ---------- Sheet 3: Summary & Assumptions ----------
+        summary_data = pd.DataFrame({
+            "Metric": ["Company", "Scenario", "FCF Source", "EV", "Equity",
+                       "IRR (FCF)", "IRR (Net)", "WACC", "Re", "Rd",
+                       "Risk-free rate", "Market risk premium", "Beta", "Tax rate",
+                       "Terminal growth (g)", "Debt (€)", "Assumed Price MDKB (€)"],
+            "Value": [company, (pss_scenario if company=="PSS" else "MDKB Base"), fcf_source,
+                      EV, EqV, IRR_fcf, IRR_net, WACC, Re, rd,
+                      rf, mrp, beta, tax, g, debt, assumed_price_mdkb]
+        })
+        summary_data.to_excel(writer, sheet_name="Summary", index=False, startrow=1)
+        ws3 = writer.sheets["Summary"]
+        ws3.write(0, 0, "Summary & Assumptions", fmt_title)
+
+        # Header format
+        for col_num, value in enumerate(summary_data.columns):
+            ws3.write(1, col_num, value, fmt_header)
+
+        # Apply pretty formats dynamically
+        for row in range(2, len(summary_data) + 2):
+            metric = summary_data.iloc[row-2, 0]
+            val = summary_data.iloc[row-2, 1]
+            if "rate" in metric.lower() or "growth" in metric.lower() or metric in ["WACC","Re","Rd","IRR (FCF)","IRR (Net)"]:
+                ws3.write(row, 1, val, fmt_percent)
+            elif "€" in metric or "EV" in metric or "Equity" in metric or "Debt" in metric or "Price" in metric:
+                ws3.write(row, 1, val, fmt_euro)
+            else:
+                ws3.write(row, 1, val, fmt_text)
+
+        ws3.set_column("A:A", 30, fmt_text)
+        ws3.set_column("B:B", 20)
+
+        # ---------- Insert charts as before ----------
+        ws_chart_dcf = workbook.add_worksheet("Chart_DCF")
+        ws_chart_irr = workbook.add_worksheet("Chart_IRR")
+        img1 = io.BytesIO(); fig.savefig(img1, format="png", dpi=150); img1.seek(0)
+        img2 = io.BytesIO(); fig2.savefig(img2, format="png", dpi=150); img2.seek(0)
+        ws_chart_dcf.insert_image("B2", "DCF.png", {"image_data": img1})
+        ws_chart_irr.insert_image("B2", "IRR.png", {"image_data": img2})
+
+        workbook.close()
+
+    st.success(f"✅ Exported clean Excel file to:\n{excel_path}")
