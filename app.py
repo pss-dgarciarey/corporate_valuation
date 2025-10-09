@@ -461,53 +461,71 @@ with pd.ExcelWriter(excel_buffer, engine="xlsxwriter") as writer:
     ws2.freeze_panes(2, 1)
     ws2.autofilter(1, 0, min(12, 1 + rcount), ccount)
 
-    # ===============================================================
-    # SUMMARY  (keep your improved, nicely formatted version)
-    # ===============================================================
-    summary_rows = [
-        ("Company", company, "text"),
-        ("Scenario", (pss_scenario if company=="PSS" else "MDKB Base"), "text"),
-        ("FCF Source", fcf_source, "text"),
-        ("EV", EV, "euro"),
-        ("Equity", EqV, "euro"),
-        ("IRR (FCF)", IRR_fcf, "pct"),
-        ("IRR (Net)", IRR_net, "pct"),
-        ("WACC", WACC, "pct"),
-        ("Re", Re, "pct"),
-        ("Rd", rd, "pct"),
-        ("Risk-free rate", rf, "pct"),
-        ("Market risk premium", mrp, "pct"),
-        ("Beta", beta, "num"),
-        ("Tax rate", tax, "pct"),
-        ("Terminal growth (g)", g, "pct"),
-        ("Debt (€)", debt, "euro"),
-        ("Assumed Price MDKB (€)", assumed_price_mdkb, "euro"),
-    ]
+# ===============================================================
+# SUMMARY  (keep your improved, nicely formatted version)
+# ===============================================================
+summary_rows = [
+    ("Company", company, "text"),
+    ("Scenario", (pss_scenario if company=="PSS" else "MDKB Base"), "text"),
+    ("FCF Source", fcf_source, "text"),
+    ("EV", EV, "euro"),
+    ("Equity", EqV, "euro"),
+    ("IRR (FCF)", IRR_fcf, "pct"),
+    ("IRR (Net)", IRR_net, "pct"),
+    ("WACC", WACC, "pct"),
+    ("Re", Re, "pct"),
+    ("Rd", rd, "pct"),
+    ("Risk-free rate", rf, "pct"),
+    ("Market risk premium", mrp, "pct"),
+    ("Beta", beta, "num"),
+    ("Tax rate", tax, "pct"),
+    ("Terminal growth (g)", g, "pct"),
+    ("Debt (€)", debt, "euro"),
+    ("Assumed Price MDKB (€)", assumed_price_mdkb, "euro"),
+]
 
-    ws3 = workbook.add_worksheet("Summary")
-    ws3.merge_range(0, 0, 1, 0, "Summary & Assumptions", fmt_title)  # A1:A2 merged/centered
-    ws3.write(2, 0, "Metric", fmt_header)
-    ws3.write(2, 1, (company if company!="PSS" else "PSS"), fmt_header)
+ws3 = workbook.add_worksheet("Summary")
+ws3.merge_range(0, 0, 1, 0, "Summary & Assumptions", fmt_title)
+ws3.write(2, 0, "Metric", fmt_header)
+ws3.write(2, 1, (company if company!="PSS" else "PSS"), fmt_header)
 
-    row = 3
-    for label, value, kind in summary_rows:
-        ws3.write(row, 0, label, fmt_text)
-        if kind == "euro":
-            ws3.write_number(row, 1, float(value), fmt_euro)
-        elif kind == "pct":
-            ws3.write_number(row, 1, float(value), fmt_pct)
-        elif kind == "num":
-            ws3.write_number(row, 1, float(value), workbook.add_format({"border":1,"align":"right","num_format":"0.00"}))
-        else:
-            ws3.write(row, 1, str(value), workbook.add_format({"border":1,"align":"right"}))
-        row += 1
+# Define a simple format for text values and N/A placeholders
+fmt_text_right = workbook.add_format({"border":1, "align":"right"})
+fmt_num_simple = workbook.add_format({"border":1, "align":"right", "num_format":"0.00"})
 
-    # widths & finish
-    ws3.set_column("A:A", 30)
-    ws3.set_column("B:B", 24)
-    ws3.freeze_panes(3, 0)
-    # visual end at row 19 (header=2 -> rows 3..19 for content)
-    ws3.autofilter(2, 0, min(19, row-1), 1)
+
+row = 3
+for label, value, kind in summary_rows:
+    ws3.write(row, 0, label, fmt_text)
+    
+    # --- START OF FIX ---
+    # Check for NaN before writing numeric types
+    is_nan = False
+    try:
+        if np.isnan(float(value)):
+            is_nan = True
+    except (TypeError, ValueError):
+        pass # Value is not a number, so it can't be NaN
+
+    if is_nan:
+        ws3.write_string(row, 1, "N/A", fmt_text_right)
+    # --- END OF FIX ---
+    
+    elif kind == "euro":
+        ws3.write_number(row, 1, float(value), fmt_euro)
+    elif kind == "pct":
+        ws3.write_number(row, 1, float(value), fmt_pct)
+    elif kind == "num":
+        ws3.write_number(row, 1, float(value), fmt_num_simple)
+    else: # kind == "text"
+        ws3.write_string(row, 1, str(value), fmt_text_right)
+    row += 1
+
+# widths & finish
+ws3.set_column("A:A", 30)
+ws3.set_column("B:B", 24)
+ws3.freeze_panes(3, 0)
+ws3.autofilter(2, 0, min(19, row-1), 1)
 
     # ===============================================================
     # CHARTS
