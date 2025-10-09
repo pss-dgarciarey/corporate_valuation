@@ -187,7 +187,7 @@ rd   = st.sidebar.number_input("Cost of Debt (Rd)", value=0.0400, step=0.0001, f
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### **Acquisition & IRR Settings**")
-assumed_price_mdkb = st.sidebar.number_input("Assumed Price for MDKB (€)", value=0.0, step=100_000.0)
+assumed_price_mdkb = st.sidebar.number_input("Assumed Price for MDKB (€)", value=4_500_000.0, step=100_000.0)
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### **FCF Source**")
