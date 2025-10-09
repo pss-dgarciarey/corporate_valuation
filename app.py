@@ -484,7 +484,7 @@ excel_buffer.seek(0)
 c1, c2 = st.columns(2)
 
 # ---- Save locally ----
-if c1.button("💾 Save Pretty Excel Locally"):
+if c1.button("💾 Save Excel Locally (VSCode User)"):
     out = ts_folder(RESULTS_DIR)
     local_path = os.path.join(out, f"{company}_Valuation_Report_{today_str}.xlsx")
     with open(local_path, "wb") as f:
@@ -492,9 +492,9 @@ if c1.button("💾 Save Pretty Excel Locally"):
     st.success(f"✅ File saved locally:\n{local_path}")
 
 # ---- Browser download ----
-c2.download_button(
-    label=f"⬇️ Download {company} Excel Report",
-    data=excel_buffer,
-    file_name=f"{company}_Valuation_Report_{today_str}.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    c2.download_button(
+        label=f"⬇️ Download Full {company} Excel Report",
+        data=excel_buffer,
+        file_name=f"{company}_Valuation_Report_{today_str}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 )
