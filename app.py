@@ -447,7 +447,7 @@ excel_buffer.seek(0)
 c1, c2 = st.columns(2)
 
 # ---- Local save ----
-if c1.button("💾 Save Locally (VSCode User")):
+if c1.button("💾 Save Locally (VSCode User)"):
     out = ts_folder(RESULTS_DIR)
     local_path = os.path.join(out, f"{company}_Valuation_Report_{dt.datetime.now():%Y%m%d}.xlsx")
     with open(local_path, "wb") as f:
