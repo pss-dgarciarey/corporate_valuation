@@ -1,5 +1,10 @@
 # ===============================================================
-# Multi-Company DCF + WACC Valuation App (PSS & MDKB) — Dynamic v6 (hardcoded scenarios A/B/C/D)
+# Multi-Company DCF + WACC Valuation App (PSS & MDKB) — v7
+# - PSS scenarios hardcoded (A/B/C/D) with requested labels
+# - IRR calculation EXACTLY as in the first script you sent
+# - Scenario selector shown right under Company (PSS only)
+# - Tables show a single Year column (no duplicate index)
+# - Sidebar inputs: 4-decimal precision
 # ===============================================================
 
 import os, io, json, datetime as dt
@@ -63,7 +68,7 @@ def ts_folder(root):
 # ------------------------
 years_pss = [2025, 2026, 2027, 2028, 2029]
 
-# B) Current Mid-term (your existing plan)
+# B) Current Mid-term Forecast (your existing plan)
 df_pss_B = pd.DataFrame({
     "Sales_kEUR":  [55650, 92408, 113161, 120765, 123180],
     "EBIT_kEUR":   [  600,  2106,   5237,   7456,   7641],
@@ -73,10 +78,10 @@ df_pss_B = pd.DataFrame({
     "FCF_kEUR":    [-6884,  2749,   9054,   7716,   5322],
 }, index=years_pss)
 
-# A) For now identical to B (you'll send updated hard values later)
+# A) Initial MPW Proposal (91M Y1) — for now identical to B (replace later when you send values)
 df_pss_A = df_pss_B.copy()
 
-# C) 55m in 2025, +15% CAGR to 2029 (margins = B by year; FCF from drivers)
+# C) CAGR 15% to 2029 (55M Y1) — margins ~B; FCF numbers precomputed (drivers: Dep 1%, CapEx 1%, tax 30%, ΔNWC 10% of ΔSales)
 df_pss_C = pd.DataFrame({
     "Sales_kEUR":  [55000, 63250, 72738, 83649, 96196],
     "EBIT_kEUR":   [  593,  1441,  3366,  5164,  5967],
@@ -86,7 +91,7 @@ df_pss_C = pd.DataFrame({
     "FCF_kEUR":    [  415,   184,  1407,  2524,  2922],
 }, index=years_pss)
 
-# D) 55m in 2025, +25% CAGR to 2029 (margins = B by year; FCF from drivers)
+# D) CAGR 25% to 2029 (55M Y1)
 df_pss_D = pd.DataFrame({
     "Sales_kEUR":  [55000, 68750, 85938, 107422, 134278],
     "EBIT_kEUR":   [  593,  1567,  3977,   6632,   8329],
@@ -109,7 +114,7 @@ nwc_m_25_29    = [5.5,  6.4,  6.4,  6.3,  6.2]
 def m_to_k(seq): return [int(round(v*1000)) for v in seq]
 
 # ------------------------
-# FUNCTIONS
+# FUNCTIONS (IRR + helpers EXACTLY as your first script)
 # ------------------------
 def capm_cost_equity(rf,mrp,b): return rf + b*mrp
 def compute_wacc(E,D,Re,Rd,t): return (E/(E+D))*Re + (D/(E+D))*Rd*(1-t) if (E+D)>0 else Re
@@ -137,10 +142,26 @@ def adjust_instalments_absolute_deduction(base,ded):
     return dict(sorted(adj)), total
 
 # ------------------------
-# SIDEBAR
+# SIDEBAR (scenario selector right under Company; 4-decimal precision)
 # ------------------------
 st.sidebar.markdown("### **Company Selection**")
 company = st.sidebar.selectbox("**Select Company**", ["PSS", "MDKB"])
+
+# PSS-only scenario selector with your labels
+pss_scenario_default = "B) Current Mid-term Forecast"
+pss_scenario = pss_scenario_default
+if company == "PSS":
+    pss_scenario = st.sidebar.selectbox(
+        "PSS Scenario",
+        [
+            "A) Initial MPW Proposal (91M Y1)",
+            "B) Current Mid-term Forecast",
+            "C) CAGR 15% to 2029 (55M Y1)",
+            "D) CAGR 25% to 2029 (55M Y1)",
+        ],
+        index=1
+    )
+scenario_code = (pss_scenario or pss_scenario_default)[:1] if company == "PSS" else "X"
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### **Capital & Risk Assumptions**")
@@ -172,42 +193,20 @@ st.sidebar.markdown("---")
 st.sidebar.markdown("### **FCF Source**")
 fcf_source = st.sidebar.radio(
     "Choose FCF model:",
-    ["Computed (from EBIT, Dep%, CapEx%, ΔNWC)","Table (provided FCF, adjusted by drivers)"],
-    index=0 if company=="PSS" else 1
+    ["Computed (from EBIT, Dep%, CapEx%, ΔNWC)", "Table (provided FCF, adjusted by drivers)"],
+    index=0 if company == "PSS" else 1
 )
-
-# ---- PSS Scenario Selector (hardcoded) ----
-pss_scenario = "B) Current Mid-term (default)"
-if company == "PSS":
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("### **PSS Scenario**")
-    pss_scenario = st.sidebar.selectbox(
-        "Select PSS Scenario",
-        [
-            "A) Initial forecast (same as B for now)",
-            "B) Current Mid-term (default)",
-            "C) 55m in 2025, CAGR 15% to 2029",
-            "D) 55m in 2025, CAGR 25% to 2029",
-        ]
-    )
 
 # ------------------------
 # DATA PREP
 # ------------------------
 if company=="PSS":
     title="Power Service Solutions GmbH (PSS)"
-    years = years_pss
-    scenario_code = pss_scenario[:1]  # 'A'/'B'/'C'/'D'
-
-    if scenario_code == "A":
-        df = df_pss_A.copy()
-    elif scenario_code == "B":
-        df = df_pss_B.copy()
-    elif scenario_code == "C":
-        df = df_pss_C.copy()
-    else:  # "D"
-        df = df_pss_D.copy()
-
+    if   scenario_code == "A": df = df_pss_A.copy()
+    elif scenario_code == "B": df = df_pss_B.copy()
+    elif scenario_code == "C": df = df_pss_C.copy()
+    else:                      df = df_pss_D.copy()
+    years = list(df.index)
 else:
     # MDKB (unchanged)
     s25_28,eb25_28,n25_28,fc25_28,c25_28=m_to_k(sales_m_25_28),m_to_k(ebit_m_25_28),m_to_k(net_m_25_28),m_to_k(fcf_m_25_28),m_to_k(cash_m_25_28)
@@ -238,7 +237,6 @@ sales_eur=(df["Sales_kEUR"].values*1000).astype(float)
 ebit_eur=(df["EBIT_kEUR"].values*1000).astype(float)
 net_eur=(df["Net_kEUR"].values*1000).astype(float)
 cash=df["Cash_kEUR"].iloc[-1]*1000
-years=list(df.index)
 
 if "Computed" in fcf_source:
     fcfs=[]
@@ -248,13 +246,12 @@ if "Computed" in fcf_source:
         dep=s*dep_pct; capex=s*capex_pct
         dNWC=(s-prev)*nwc_pct if (use_nwc and i>0) else 0
         fcf=(e*(1-tax))+dep-capex-dNWC
-        # Respect original plan's final-year FCF only for A/B
+        # Respect explicit plan value only for PSS A/B final year (as in your prior logic)
         if company=="PSS" and y==2029 and scenario_code in ("A","B") and "FCF_kEUR" in df.columns and not pd.isna(df.loc[y,"FCF_kEUR"]):
             val=df.loc[y,"FCF_kEUR"]*1000.0
             if abs(val)>0: fcf=val
         fcfs.append(fcf)
 else:
-    # “Table” mode but responsive to assumptions
     base_fcfs=(df["FCF_kEUR"].values*1000).astype(float)
     adj=[]
     for i,y in enumerate(years):
@@ -282,38 +279,56 @@ st.caption(f"Logged in as **{who}** — {dt.datetime.now():%H:%M}{scenario_note}
 
 if "Computed" in fcf_source:
     st.success("The model is currently using **Computed Free Cash Flow (FCFF)**. "
-        "This represents the cash flow available to all investors, derived from operating profits before financing effects.\n\n"
-        "**Formula:**  \nFCFF = EBIT × (1 − Tax) + Depreciation − CapEx − ΔNWC  \n"
-        "Where:  \n• Depreciation = Dep% × Sales  \n• CapEx = CapEx% × Sales  \n• ΔNWC = (Salesₜ − Salesₜ₋₁) × (ΔNWC% of ΔSales)\n\n"
-        "This method ensures consistency with the chosen cost and growth drivers but may not match accounting cash flows exactly.")
+        "FCFF = EBIT × (1 − Tax) + Depreciation − CapEx − ΔNWC.")
 else:
-    st.info("The model is using **Table Free Cash Flow (Adjusted)**. "
-            "Original management FCF values are used but adjusted dynamically according to sidebar assumptions. "
-            "This allows responsiveness while retaining the plan structure.")
+    st.info("The model is using **Table Free Cash Flow (Adjusted)** (plan FCF with light driver responsiveness).")
 
 # ------------------------
-# RESULTS
+# RESULTS (single Year column; no duplicate index)
 # ------------------------
 st.subheader(f"Key Lines — {title}")
-disp=df.copy();disp.insert(0,"Year",[str(y) for y in years])
-st.dataframe(disp.style.format({c:"{:,.0f}" for c in disp.columns if c.endswith("_kEUR")}),use_container_width=True)
+disp = df.copy().reset_index().rename(columns={"index":"Year"})
+disp["Year"] = disp["Year"].astype(str)
+try:
+    st.dataframe(
+        disp.style.format({c: "{:,.0f}" for c in disp.columns if c.endswith("_kEUR")}),
+        use_container_width=True,
+        hide_index=True,
+    )
+except TypeError:
+    st.dataframe(disp.set_index("Year").style.format({c: "{:,.0f}" for c in disp.columns if c.endswith("_kEUR")}),
+                 use_container_width=True)
 
 c1,c2,c3,c4,c5=st.columns(5)
-c1.metric("Re",f"{Re*100:.2f}%");c2.metric("Rd",f"{rd*100:.2f}%")
-c3.metric("WACC",f"{WACC*100:.2f}%");c4.metric("EV",f"€{EV:,.0f}");c5.metric("Equity",f"€{EqV:,.0f}")
-st.caption("⚙️ Note: Changing the FCF model modifies underlying cashflows, hence the EV & Equity values differ accordingly.")
+c1.metric("Re",f"{Re*100:.2f}%"); c2.metric("Rd",f"{rd*100:.2f}%")
+c3.metric("WACC",f"{WACC*100:.2f}%"); c4.metric("EV",f"€{EV:,.0f}"); c5.metric("Equity",f"€{EqV:,.0f}")
+st.caption("⚙️ Note: Changing the FCF model modifies underlying cashflows, hence EV & Equity differ accordingly.")
 
-dfres=pd.DataFrame({"Year":[str(y) for y in years],
-                    "Sales (€)":sales_eur,"EBIT (€)":ebit_eur,"Net (€)":net_eur,"FCF (€)":fcfs,"PV(FCF)":pv_fcfs})
-st.dataframe(dfres.style.format({c:"€{:,.0f}" for c in dfres.columns if c!="Year"}),use_container_width=True)
+dfres = pd.DataFrame({
+    "Year": [str(y) for y in years],
+    "Sales (€)": sales_eur,
+    "EBIT (€)":  ebit_eur,
+    "Net (€)":   net_eur,
+    "FCF (€)":   fcfs,
+    "PV(FCF)":   pv_fcfs,
+})
+try:
+    st.dataframe(
+        dfres.style.format({c: "€{:,.0f}" for c in dfres.columns if c != "Year"}),
+        use_container_width=True,
+        hide_index=True,
+    )
+except TypeError:
+    st.dataframe(dfres.set_index("Year").style.format({c: "€{:,.0f}" for c in dfres.columns}),
+                 use_container_width=True)
 
 fig=plt.figure(figsize=(9,4.5))
-plt.plot(years,fcfs,"o-",label="FCF");plt.plot(years,pv_fcfs,"o-",label="PV(FCF)")
-plt.axhline(0,linewidth=.8);plt.legend();plt.title(f"Free Cash Flow — {company}")
+plt.plot(years,fcfs,"o-",label="FCF"); plt.plot(years,pv_fcfs,"o-",label="PV(FCF)")
+plt.axhline(0,linewidth=.8); plt.legend(); plt.title(f"Free Cash Flow — {company}")
 st.pyplot(fig)
 
 # ------------------------
-# IRR
+# IRR (EXACT same method as your first script)
 # ------------------------
 st.subheader("💰 IRR Analysis")
 if company=="PSS":
@@ -337,7 +352,7 @@ col2.metric("IRR (Net Profit)",f"{IRR_net*100:.2f}%" if not np.isnan(IRR_net) el
 fig2=plt.figure(figsize=(5.5,4))
 plt.bar(["FCF","Net"],[IRR_fcf*100 if not np.isnan(IRR_fcf) else 0,
                        IRR_net*100 if not np.isnan(IRR_net) else 0])
-plt.ylabel("%");plt.title(f"IRR — {company}")
+plt.ylabel("%"); plt.title(f"IRR — {company}")
 st.pyplot(fig2)
 
 # ------------------------
@@ -375,14 +390,12 @@ excel_buffer=io.BytesIO()
 with pd.ExcelWriter(excel_buffer,engine="xlsxwriter") as writer:
     dfres.to_excel(writer,sheet_name="DCF_Results",index=False)
     df_sens.to_excel(writer,sheet_name="Sensitivity",index=True)
-    # Charts
     workbook=writer.book
     ws1=workbook.add_worksheet("Chart_DCF"); ws2=workbook.add_worksheet("Chart_IRR")
     img1=io.BytesIO(); fig.savefig(img1,format="png",dpi=150); img1.seek(0)
     img2=io.BytesIO(); fig2.savefig(img2,format="png",dpi=150); img2.seek(0)
     ws1.insert_image("B2","DCF.png",{"image_data":img1})
     ws2.insert_image("B2","IRR.png",{"image_data":img2})
-    # Summary
     pd.DataFrame({
         "Metric":["Company","Scenario","FCF Source","EV","Equity","IRR (FCF)","IRR (Net)","WACC","Re","Rd"],
         "Value":[company, (pss_scenario if company=="PSS" else "MDKB Base"), fcf_source, EV, EqV, IRR_fcf, IRR_net, WACC, Re, rd]
