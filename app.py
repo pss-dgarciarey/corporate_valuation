@@ -142,23 +142,6 @@ def adjust_instalments_absolute_deduction(base,ded):
 st.sidebar.markdown("### **Company Selection**")
 company = st.sidebar.selectbox("**Select Company**", ["PSS", "MDKB"])
 
-# PSS-only Scenario selector (immediately after company)
-pss_scenario_default = "B) Current Mid-term (default)"
-pss_scenario = pss_scenario_default
-if company == "PSS":
-    pss_scenario = st.sidebar.selectbox(
-        "PSS Scenario",
-        [
-            "A) Initial MPW Proposal (91M Y1)",
-            "B) Current Mid-term Forecast",
-            "C) CAGR 15% to 2029 (55M Y1)",
-            "D) CAGR 25% to 2029 (55M Y1)",
-        ],
-        index=1
-    )
-# Helper code for later sections (e.g., FCF override logic)
-scenario_code = (pss_scenario or pss_scenario_default)[:1] if company == "PSS" else "X"
-
 st.sidebar.markdown("---")
 st.sidebar.markdown("### **Capital & Risk Assumptions**")
 rf   = st.sidebar.number_input("Risk-free rate",        value=0.0270, step=0.0001, format="%.4f")
@@ -172,7 +155,7 @@ st.sidebar.markdown("### **Operational Assumptions**")
 dep_pct   = st.sidebar.number_input("Depreciation % of Sales", value=0.0100, step=0.0001, format="%.4f")
 capex_pct = st.sidebar.number_input("CapEx % of Sales",        value=0.0100, step=0.0001, format="%.4f")
 use_nwc   = st.sidebar.checkbox("Include ΔNWC adjustment", value=True)
-default_nwc = -0.4100 if company == "MDKB" else 0.1000
+default_nwc = -0.4100 if company=="MDKB" else 0.1000
 nwc_pct   = st.sidebar.number_input("ΔNWC % of ΔSales", value=float(default_nwc), step=0.0001, format="%.4f")
 mdkb_extend_growth = st.sidebar.number_input("MDKB 2029 growth", value=0.0200, step=0.0001, format="%.4f")
 
@@ -189,8 +172,8 @@ st.sidebar.markdown("---")
 st.sidebar.markdown("### **FCF Source**")
 fcf_source = st.sidebar.radio(
     "Choose FCF model:",
-    ["Computed (from EBIT, Dep%, CapEx%, ΔNWC)", "Table (provided FCF, adjusted by drivers)"],
-    index=0 if company == "PSS" else 1
+    ["Computed (from EBIT, Dep%, CapEx%, ΔNWC)","Table (provided FCF, adjusted by drivers)"],
+    index=0 if company=="PSS" else 1
 )
 
 # ---- PSS Scenario Selector (hardcoded) ----
@@ -201,10 +184,10 @@ if company == "PSS":
     pss_scenario = st.sidebar.selectbox(
         "Select PSS Scenario",
         [
-            "A) Initial MPW Proposal (91M Y1)",
-            "B) Current Mid-term Forecast",
-            "C) CAGR 15% to 2029 (55M Y1)",
-            "D) CAGR 25% to 2029 (55M Y1)",
+            "A) Initial forecast (same as B for now)",
+            "B) Current Mid-term (default)",
+            "C) 55m in 2025, CAGR 15% to 2029",
+            "D) 55m in 2025, CAGR 25% to 2029",
         ]
     )
 
