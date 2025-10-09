@@ -1,10 +1,5 @@
 # ===============================================================
 # Multi-Company DCF + WACC Valuation App (PSS & MDKB) — v7
-# - PSS scenarios hardcoded (A/B/C/D) with requested labels
-# - IRR calculation EXACTLY as in the first script you sent
-# - Scenario selector shown right under Company (PSS only)
-# - Tables show a single Year column (no duplicate index)
-# - Sidebar inputs: 4-decimal precision
 # ===============================================================
 
 import os, io, json, datetime as dt
