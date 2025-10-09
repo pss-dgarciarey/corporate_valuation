@@ -361,46 +361,75 @@ df_sens=pd.DataFrame(mt,index=[f"{w*100:.1f}%" for w in wr],columns=[f"{x*100:.1
 st.dataframe(df_sens.style.format("€{:,.0f}"),use_container_width=True)
 
 # ===============================================================
-# EXPORT — Unified Pretty Excel (Local + Browser)
+# EXPORT — Fully Formatted Pretty Excel (Local + Browser)
 # ===============================================================
 import xlsxwriter
 
 st.markdown("### 📦 Export Options")
 
-# 1️⃣ Generate the pretty Excel once in memory
 excel_buffer = io.BytesIO()
+today_str = f"{dt.datetime.now():%Y%m%d}"
 
 with pd.ExcelWriter(excel_buffer, engine="xlsxwriter") as writer:
     workbook = writer.book
 
     # ---------- FORMATS ----------
-    fmt_header  = workbook.add_format({"bold": True, "bg_color": "#E1EAF5", "border": 1})
+    fmt_header  = workbook.add_format({"bold": True, "bg_color": "#E1EAF5", "border": 1, "align": "center"})
     fmt_text    = workbook.add_format({"border": 1, "align": "left"})
+    fmt_center  = workbook.add_format({"align": "center", "valign": "vcenter"})
     fmt_year    = workbook.add_format({"num_format": "0", "border": 1, "align": "center"})
-    fmt_euro    = workbook.add_format({"num_format": '€#,##0;[Red]-€#,##0', "border": 1})
-    fmt_percent = workbook.add_format({"num_format": "0.00%", "border": 1})
-    fmt_title   = workbook.add_format({"bold": True, "font_size": 14})
+    fmt_euro    = workbook.add_format({"num_format": '€#,##0;[Red]-€#,##0', "border": 1, "align": "right"})
+    fmt_percent = workbook.add_format({"num_format": "0.00%", "border": 1, "align": "right"})
+    fmt_title   = workbook.add_format({"bold": True, "font_size": 14, "align": "center", "valign": "vcenter"})
+    fmt_textcell= workbook.add_format({"border": 1, "align": "right"})
 
-    # ---------- Sheet 1: DCF Results ----------
+    # ===============================================================
+    # DCF RESULTS SHEET
+    # ===============================================================
     dfres.to_excel(writer, sheet_name="DCF_Results", index=False, startrow=1)
     ws = writer.sheets["DCF_Results"]
-    ws.write(0, 0, f"DCF Results — {title} ({pss_scenario if company=='PSS' else 'Base'})", fmt_title)
+    ws.merge_range("A1:F1",
+                   f"DCF Results — {title} ({pss_scenario if company=='PSS' else 'Base'})",
+                   fmt_title)
+
+    # Header row (row 2)
     for col_num, col in enumerate(dfres.columns):
         ws.write(1, col_num, col, fmt_header)
+
+    # Apply formatting
     ws.set_column("A:A", 8, fmt_year)
     ws.set_column("B:F", 20, fmt_euro)
     ws.freeze_panes(2, 1)
 
-    # ---------- Sheet 2: Sensitivity ----------
+    # Table visual boundary — clear rows beyond row 7
+    ws.set_row(7, None, None)  # ensures row7 included as table end
+    ws.autofilter(1, 0, 7, 5)
+
+    # Auto-fit all columns dynamically
+    for i, col in enumerate(dfres.columns):
+        max_len = max(dfres[col].astype(str).map(len).max(), len(col)) + 2
+        ws.set_column(i, i, max_len)
+
+    # ===============================================================
+    # SENSITIVITY SHEET
+    # ===============================================================
     df_sens.to_excel(writer, sheet_name="Sensitivity", index=True, startrow=1)
     ws2 = writer.sheets["Sensitivity"]
-    ws2.write(0, 0, "Sensitivity Table — EV by WACC & Terminal Growth (g)", fmt_title)
+    ws2.merge_range("A1:F1", "Sensitivity Table — EV by WACC & Terminal Growth (g)", fmt_title)
+
     for col_num, col in enumerate(df_sens.reset_index().columns):
         ws2.write(1, col_num, col, fmt_header)
-    ws2.set_column(0, len(df_sens.columns), 15, fmt_euro)
+    ws2.set_column(0, len(df_sens.columns), 18, fmt_euro)
     ws2.freeze_panes(2, 1)
+    ws2.set_row(12, None, None)   # finish table at row 12
 
-    # ---------- Sheet 3: Summary & Assumptions ----------
+    for i, col in enumerate(df_sens.reset_index().columns):
+        max_len = max(df_sens.reset_index()[col].astype(str).map(len).max(), len(col)) + 2
+        ws2.set_column(i, i, max_len)
+
+    # ===============================================================
+    # SUMMARY SHEET
+    # ===============================================================
     summary_data = pd.DataFrame({
         "Metric": ["Company", "Scenario", "FCF Source", "EV", "Equity",
                    "IRR (FCF)", "IRR (Net)", "WACC", "Re", "Rd",
@@ -410,27 +439,35 @@ with pd.ExcelWriter(excel_buffer, engine="xlsxwriter") as writer:
                   EV, EqV, IRR_fcf, IRR_net, WACC, Re, rd,
                   rf, mrp, beta, tax, g, debt, assumed_price_mdkb]
     })
-    summary_data.to_excel(writer, sheet_name="Summary", index=False, startrow=1)
-    ws3 = writer.sheets["Summary"]
-    ws3.write(0, 0, "Summary & Assumptions", fmt_title)
-    for col_num, col in enumerate(summary_data.columns):
-        ws3.write(1, col_num, col, fmt_header)
 
-    for i in range(len(summary_data)):
-        metric = summary_data.iloc[i, 0]
-        val = summary_data.iloc[i, 1]
-        row = i + 2
-        if any(k in metric.lower() for k in ["rate","growth"]) or metric in ["WACC","Re","Rd","IRR (FCF)","IRR (Net)"]:
+    summary_data.to_excel(writer, sheet_name="Summary", index=False, startrow=2)
+    ws3 = writer.sheets["Summary"]
+    ws3.merge_range("A1:A2", "Summary & Assumptions", fmt_title)
+
+    # Apply column formats: all text right-aligned in B
+    for row in range(2, len(summary_data) + 2):
+        metric = summary_data.iloc[row - 2, 0]
+        val = summary_data.iloc[row - 2, 1]
+        if any(k in metric.lower() for k in ["rate", "growth"]) or metric in ["WACC","Re","Rd","IRR (FCF)","IRR (Net)"]:
             ws3.write(row, 1, val, fmt_percent)
-        elif "€" in metric or metric in ["EV","Equity","Debt (€)","Assumed Price MDKB (€)"]:
+        elif "€" in metric or metric in ["EV", "Equity", "Debt (€)", "Assumed Price MDKB (€)"]:
             ws3.write(row, 1, val, fmt_euro)
         else:
-            ws3.write(row, 1, val, fmt_text)
-    ws3.set_column("A:A", 30, fmt_text)
-    ws3.set_column("B:B", 22)
-    ws3.freeze_panes(2, 1)
+            ws3.write(row, 1, str(val), fmt_textcell)
 
-    # ---------- Charts ----------
+    ws3.set_column("A:A", 30, fmt_text)
+    ws3.set_column("B:B", 25)
+    ws3.freeze_panes(3, 0)
+    ws3.set_row(19, None, None)   # table ends at row 19
+
+    # Auto-fit columns
+    for i, col in enumerate(summary_data.columns):
+        max_len = max(summary_data[col].astype(str).map(len).max(), len(col)) + 2
+        ws3.set_column(i, i, max_len)
+
+    # ===============================================================
+    # CHARTS
+    # ===============================================================
     ws_chart_dcf = workbook.add_worksheet("Chart_DCF")
     ws_chart_irr = workbook.add_worksheet("Chart_IRR")
     img1 = io.BytesIO(); fig.savefig(img1, format="png", dpi=150); img1.seek(0)
@@ -440,16 +477,16 @@ with pd.ExcelWriter(excel_buffer, engine="xlsxwriter") as writer:
 
     workbook.close()
 
-# Rewind buffer to start
+# Reset pointer
 excel_buffer.seek(0)
 
-# 2️⃣ Offer both buttons (same workbook)
+# 2 OPTIONS (same workbook)
 c1, c2 = st.columns(2)
 
-# ---- Local save ----
-if c1.button("💾 Save Locally (VSCode User)"):
+# ---- Save locally ----
+if c1.button("💾 Save Pretty Excel Locally"):
     out = ts_folder(RESULTS_DIR)
-    local_path = os.path.join(out, f"{company}_Valuation_Report_{dt.datetime.now():%Y%m%d}.xlsx")
+    local_path = os.path.join(out, f"{company}_Valuation_Report_{today_str}.xlsx")
     with open(local_path, "wb") as f:
         f.write(excel_buffer.getbuffer())
     st.success(f"✅ File saved locally:\n{local_path}")
@@ -458,6 +495,6 @@ if c1.button("💾 Save Locally (VSCode User)"):
 c2.download_button(
     label=f"⬇️ Download {company} Excel Report",
     data=excel_buffer,
-    file_name=f"{company}_Valuation_Report_{dt.datetime.now():%Y%m%d}.xlsx",
+    file_name=f"{company}_Valuation_Report_{today_str}.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 )
