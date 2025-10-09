@@ -374,49 +374,88 @@ with pd.ExcelWriter(excel_buffer, engine="xlsxwriter") as writer:
     workbook = writer.book
 
     # ---------- FORMATS ----------
-    # Accounting euro with red negatives (left currency symbol spacing)
-    fmt_euro_acc = workbook.add_format({
-        "num_format": '_-€ * #,##0_-;[Red]-€ * #,##0_-;_-€ * "-"??_-;_-@_-' ,
+    fmt_title   = workbook.add_format({"bold": True, "font_size": 14, "align": "center", "valign": "vcenter"})
+    fmt_header  = workbook.add_format({"bold": True, "bg_color": "#E1EAF5", "border": 1, "align": "center"})
+    fmt_text    = workbook.add_format({"border": 1, "align": "left"})
+    fmt_yeartxt = workbook.add_format({"border": 1, "align": "center"})  # Year shown as text
+    fmt_pct     = workbook.add_format({"num_format": "0.00%", "border": 1, "align": "right"})
+    # Accounting € with red negatives
+    fmt_euro    = workbook.add_format({
+        "num_format": '_-€ * #,##0_-;[Red]-€ * #,##0_-;_-€ * "-"??_-;_-@_-',
         "border": 1, "align": "right"
     })
-    fmt_header  = workbook.add_format({"bold": True, "bg_color": "#E1EAF5", "border": 1, "align": "center"})
-    fmt_title   = workbook.add_format({"bold": True, "font_size": 14, "align": "center", "valign": "vcenter"})
-    fmt_year    = workbook.add_format({"num_format": "0", "border": 1, "align": "center"})
-    fmt_percent = workbook.add_format({"num_format": "0.00%", "border": 1, "align": "right"})
-    fmt_text    = workbook.add_format({"border": 1, "align": "left"})
-    fmt_right   = workbook.add_format({"border": 1, "align": "right"})
 
     # ===============================================================
     # DCF RESULTS
     # ===============================================================
+    # write raw data first
     dfres.to_excel(writer, sheet_name="DCF_Results", index=False, startrow=1)
     ws = writer.sheets["DCF_Results"]
-    ws.merge_range("A1:F1", f"DCF Results — {title} ({pss_scenario if company=='PSS' else 'Base'})", fmt_title)
-    for c, col in enumerate(dfres.columns): ws.write(1, c, col, fmt_header)
-    ws.set_column("A:A", 8, fmt_year)
-    ws.set_column("B:F", 20, fmt_euro_acc)
+
+    # Clean, centered title (merged A1:F1)
+    dcf_title = f"DCF Results — {title}" + (f" — {pss_scenario}" if company == "PSS" else "")
+    ws.merge_range(0, 0, 0, 5, dcf_title, fmt_title)
+    ws.set_row(0, 24)
+
+    # Rewrite headers with header format
+    for c, col in enumerate(dfres.columns):
+        ws.write(1, c, col, fmt_header)
+
+    # Apply formats cell-by-cell so Excel shows accounting € (B..F) and text year (A)
+    nrows, ncols = dfres.shape
+    for r in range(nrows):
+        excel_row = 2 + r  # data start at row 3 in Excel UI
+        # Year as text
+        ws.write_string(excel_row, 0, str(dfres.iloc[r, 0]), fmt_yeartxt)
+        # Values as accounting €
+        for c in range(1, ncols):
+            val = float(dfres.iloc[r, c])
+            ws.write_number(excel_row, c, val, fmt_euro)
+
+    # sizing & filters; table ends at row 7 (incl.)
+    ws.set_column("A:A", 10)
+    ws.set_column("B:F", 20)
     ws.freeze_panes(2, 1)
-    ws.autofilter(1, 0, 7, 5)          # table ends at row 7 (incl.)
-    # auto-fit
-    for i, col in enumerate(dfres.columns):
-        ws.set_column(i, i, max(len(col), dfres[col].astype(str).map(len).max()) + 2)
+    ws.autofilter(1, 0, 7, 5)  # header row 2 .. row 7
 
     # ===============================================================
     # SENSITIVITY
     # ===============================================================
     df_sens.to_excel(writer, sheet_name="Sensitivity", index=True, startrow=1)
     ws2 = writer.sheets["Sensitivity"]
-    ws2.merge_range("A1:F1", "Sensitivity Table — EV by WACC & Terminal Growth (g)", fmt_title)
-    for c, col in enumerate(df_sens.reset_index().columns): ws2.write(1, c, col, fmt_header)
-    ws2.set_column(0, len(df_sens.columns), 18, fmt_euro_acc)
+
+    # Title merged A1:F1
+    ws2.merge_range(0, 0, 0, 5, "Sensitivity Table — EV by WACC & Terminal Growth (g)", fmt_title)
+    ws2.set_row(0, 24)
+
+    # Re-write headers (they include the 'index' header then the g-columns)
+    sens_cols = list(df_sens.reset_index().columns)
+    for c, col in enumerate(sens_cols):
+        ws2.write(1, c, col, fmt_header)
+
+    # Values: rewrite B..last as accounting €, keep column A as text/percent label as-is
+    rcount, ccount = df_sens.shape
+    for r in range(rcount):
+        excel_row = 2 + r
+        # keep index label as written by pandas (strings like "7.5%"), or convert to pct if you prefer:
+        # try to parse index back to float percent:
+        try:
+            wacc_val = float(str(df_sens.index[r]).replace("%",""))/100.0
+            ws2.write_number(excel_row, 0, wacc_val, fmt_pct)
+        except Exception:
+            pass  # already text
+
+        for c in range(ccount):
+            excel_col = 1 + c  # shift by one due to index column
+            ws2.write_number(excel_row, excel_col, float(df_sens.iloc[r, c]), fmt_euro)
+
+    # width, freeze, and cap table visually at row 12
+    ws2.set_column(0, ccount, 18)
     ws2.freeze_panes(2, 1)
-    # limit visual area to row 12
-    ws2.autofilter(1, 0, 12, len(df_sens.columns))
-    for i, col in enumerate(df_sens.reset_index().columns):
-        ws2.set_column(i, i, max(len(col), df_sens.reset_index()[col].astype(str).map(len).max()) + 2)
+    ws2.autofilter(1, 0, min(12, 1 + rcount), ccount)
 
     # ===============================================================
-    # SUMMARY (write values as NUMBERS, right-aligned, accounting €, proper %)
+    # SUMMARY  (keep your improved, nicely formatted version)
     # ===============================================================
     summary_rows = [
         ("Company", company, "text"),
@@ -431,53 +470,37 @@ with pd.ExcelWriter(excel_buffer, engine="xlsxwriter") as writer:
         ("Rd", rd, "pct"),
         ("Risk-free rate", rf, "pct"),
         ("Market risk premium", mrp, "pct"),
-        ("Beta", beta, "pct"),               # if you prefer plain number, change type to "num"
+        ("Beta", beta, "num"),
         ("Tax rate", tax, "pct"),
         ("Terminal growth (g)", g, "pct"),
         ("Debt (€)", debt, "euro"),
         ("Assumed Price MDKB (€)", assumed_price_mdkb, "euro"),
     ]
 
-    # Create sheet and merged title (A1:A2)
     ws3 = workbook.add_worksheet("Summary")
-    ws3.merge_range("A1:A2", "Summary & Assumptions", fmt_title)
-
-    # Headers at row 3 (1-based) -> index row=2 zero-based for write()
+    ws3.merge_range(0, 0, 1, 0, "Summary & Assumptions", fmt_title)  # A1:A2 merged/centered
     ws3.write(2, 0, "Metric", fmt_header)
     ws3.write(2, 1, (company if company!="PSS" else "PSS"), fmt_header)
 
-    # Write rows starting row 4 (zero-based row index 3)
     row = 3
-    max_a, max_b = len("Metric"), len("Value")
     for label, value, kind in summary_rows:
         ws3.write(row, 0, label, fmt_text)
         if kind == "euro":
-            ws3.write_number(row, 1, float(value), fmt_euro_acc)
+            ws3.write_number(row, 1, float(value), fmt_euro)
         elif kind == "pct":
-            ws3.write_number(row, 1, float(value), fmt_percent)
+            ws3.write_number(row, 1, float(value), fmt_pct)
         elif kind == "num":
-            ws3.write_number(row, 1, float(value), fmt_right)
+            ws3.write_number(row, 1, float(value), workbook.add_format({"border":1,"align":"right","num_format":"0.00"}))
         else:
-            ws3.write(row, 1, str(value), fmt_right)
-        max_a = max(max_a, len(str(label)))
-        # compute width for B from formatted string length estimate
-        if kind == "pct":
-            shown = f"{float(value)*100:,.2f}%"
-        elif kind == "euro":
-            shown = f"{float(value):,.0f}"
-        else:
-            shown = str(value)
-        max_b = max(max_b, len(shown))
+            ws3.write(row, 1, str(value), workbook.add_format({"border":1,"align":"right"}))
         row += 1
 
-    # Finish at row 19 visually (header row is 3, so write filter/footer up to 19)
-    end_row = 19
-    ws3.autofilter(2, 0, min(end_row, row-1), 1)
-
-    # Column widths and alignment
-    ws3.set_column("A:A", max(18, max_a + 2), fmt_text)
-    ws3.set_column("B:B", max(20, max_b + 4))   # values column (formats applied per cell)
+    # widths & finish
+    ws3.set_column("A:A", 30)
+    ws3.set_column("B:B", 24)
     ws3.freeze_panes(3, 0)
+    # visual end at row 19 (header=2 -> rows 3..19 for content)
+    ws3.autofilter(2, 0, min(19, row-1), 1)
 
     # ===============================================================
     # CHARTS
