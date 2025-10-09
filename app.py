@@ -78,7 +78,7 @@ df_pss_B = pd.DataFrame({
     "FCF_kEUR":    [-6884,  2749,   9054,   7716,   5322],
 }, index=years_pss)
 
-# A) Initial MPW Proposal (91M Y1) — for now identical to B (replace later when you send values)
+# A) Initial MPW Proposal (91M Y1) — for now identical to B (this we need to replace later on, waiting for Thomas input)
 df_pss_A = df_pss_B.copy()
 
 # C) CAGR 15% to 2029 (55M Y1) — margins ~B; FCF numbers precomputed (drivers: Dep 1%, CapEx 1%, tax 30%, ΔNWC 10% of ΔSales)
@@ -102,7 +102,7 @@ df_pss_D = pd.DataFrame({
 }, index=years_pss)
 
 # ------------------------
-# MDKB inputs (unchanged)
+# MDKB inputs (here I'm using the excel file, forgot the name but MDKB data)
 # ------------------------
 sales_m_25_28  = [13.7, 11.7, 12.0, 12.3]
 ebit_m_25_28   = [0.8,  0.9,  1.0,  1.0]
@@ -114,7 +114,7 @@ nwc_m_25_29    = [5.5,  6.4,  6.4,  6.3,  6.2]
 def m_to_k(seq): return [int(round(v*1000)) for v in seq]
 
 # ------------------------
-# FUNCTIONS (IRR + helpers EXACTLY as your first script)
+# FUNCTIONS (IRR + helpers)
 # ------------------------
 def capm_cost_equity(rf,mrp,b): return rf + b*mrp
 def compute_wacc(E,D,Re,Rd,t): return (E/(E+D))*Re + (D/(E+D))*Rd*(1-t) if (E+D)>0 else Re
@@ -328,7 +328,7 @@ plt.axhline(0,linewidth=.8); plt.legend(); plt.title(f"Free Cash Flow — {compa
 st.pyplot(fig)
 
 # ------------------------
-# IRR (EXACT same method as your first script)
+# IRR (Same method as first script, since Thomas says okay)
 # ------------------------
 st.subheader("💰 IRR Analysis")
 if company=="PSS":
