@@ -79,8 +79,8 @@ df_pss_A = pd.DataFrame({
     "EBIT_kEUR":   [   547,  12908,  12934,  13329,  13329],
     "Net_kEUR":    [   297,  12123,   9133,   8719,   8719],
     "Equity_kEUR": [12596, 14731,  19219,  24750,  25850],
-    "Cash_kEUR":   [ 8176, 11205,  20394,  28367,  36000],
-    "FCF_kEUR":    [-6884,  2749,   9054,   7716,   5322],
+    "Cash_kEUR":   [12600, 28500, 42700, 53800, 62519],
+    "FCF_kEUR":    [ 8500, 15900, 14200, 11100,  8719],
 }, index=years_pss)
 
 # C) CAGR 15% to 2029 (55M Y1) — margins ~B; FCF numbers precomputed (drivers: Dep 1%, CapEx 1%, tax 30%, ΔNWC 10% of ΔSales)
