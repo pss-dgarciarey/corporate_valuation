@@ -492,9 +492,9 @@ if c1.button("💾 Save Excel Locally (VSCode User)"):
     st.success(f"✅ File saved locally:\n{local_path}")
 
 # ---- Browser download ----
-    c2.download_button(
-        label=f"⬇️ Download Full {company} Excel Report",
-        data=excel_buffer,
-        file_name=f"{company}_Valuation_Report_{today_str}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+ c2.download_button(
+     label=f"⬇️ Download Full {company} Excel Report",
+     data=excel_buffer,
+     file_name=f"{company}_Valuation_Report_{today_str}.xlsx",
+     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 )
