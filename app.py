@@ -381,154 +381,106 @@ with pd.ExcelWriter(excel_buffer, engine="xlsxwriter") as writer:
     workbook = writer.book
 
     # ---------- FORMATS ----------
+    # (Your formats are correct, no changes here)
     fmt_title   = workbook.add_format({"bold": True, "font_size": 14, "align": "center", "valign": "vcenter"})
     fmt_header  = workbook.add_format({"bold": True, "bg_color": "#E1EAF5", "border": 1, "align": "center"})
     fmt_text    = workbook.add_format({"border": 1, "align": "left"})
-    fmt_yeartxt = workbook.add_format({"border": 1, "align": "center"})  # Year shown as text
+    fmt_yeartxt = workbook.add_format({"border": 1, "align": "center"})
     fmt_pct     = workbook.add_format({"num_format": "0.00%", "border": 1, "align": "right"})
-    # Accounting € with red negatives
     fmt_euro    = workbook.add_format({
         "num_format": '_-€ * #,##0_-;[Red]-€ * #,##0_-;_-€ * "-"??_-;_-@_-',
         "border": 1, "align": "right"
     })
-
+    
     # ===============================================================
     # DCF RESULTS
     # ===============================================================
-    # write raw data first
+    # (This section is correct)
     dfres.to_excel(writer, sheet_name="DCF_Results", index=False, startrow=1)
     ws = writer.sheets["DCF_Results"]
-
-    # Clean, centered title (merged A1:F1)
     dcf_title = f"DCF Results — {title}" + (f" — {pss_scenario}" if company == "PSS" else "")
     ws.merge_range(0, 0, 0, 5, dcf_title, fmt_title)
     ws.set_row(0, 24)
-
-    # Rewrite headers with header format
     for c, col in enumerate(dfres.columns):
         ws.write(1, c, col, fmt_header)
-
-    # Apply formats cell-by-cell so Excel shows accounting € (B..F) and text year (A)
     nrows, ncols = dfres.shape
     for r in range(nrows):
-        excel_row = 2 + r  # data start at row 3 in Excel UI
-        # Year as text
+        excel_row = 2 + r
         ws.write_string(excel_row, 0, str(dfres.iloc[r, 0]), fmt_yeartxt)
-        # Values as accounting €
         for c in range(1, ncols):
             val = float(dfres.iloc[r, c])
             ws.write_number(excel_row, c, val, fmt_euro)
-
-    # sizing & filters; table ends at row 7 (incl.)
     ws.set_column("A:A", 10)
     ws.set_column("B:F", 20)
     ws.freeze_panes(2, 1)
-    ws.autofilter(1, 0, 7, 5)  # header row 2 .. row 7
+    ws.autofilter(1, 0, 7, 5)
 
     # ===============================================================
     # SENSITIVITY
     # ===============================================================
+    # (This section is correct)
     df_sens.to_excel(writer, sheet_name="Sensitivity", index=True, startrow=1)
     ws2 = writer.sheets["Sensitivity"]
-
-    # Title merged A1:F1
     ws2.merge_range(0, 0, 0, 5, "Sensitivity Table — EV by WACC & Terminal Growth (g)", fmt_title)
     ws2.set_row(0, 24)
-
-    # Re-write headers (they include the 'index' header then the g-columns)
     sens_cols = list(df_sens.reset_index().columns)
     for c, col in enumerate(sens_cols):
         ws2.write(1, c, col, fmt_header)
-
-    # Values: rewrite B..last as accounting €, keep column A as text/percent label as-is
     rcount, ccount = df_sens.shape
     for r in range(rcount):
         excel_row = 2 + r
-        # keep index label as written by pandas (strings like "7.5%"), or convert to pct if you prefer:
-        # try to parse index back to float percent:
         try:
             wacc_val = float(str(df_sens.index[r]).replace("%",""))/100.0
             ws2.write_number(excel_row, 0, wacc_val, fmt_pct)
         except Exception:
-            pass  # already text
-
+            pass
         for c in range(ccount):
-            excel_col = 1 + c  # shift by one due to index column
+            excel_col = 1 + c
             ws2.write_number(excel_row, excel_col, float(df_sens.iloc[r, c]), fmt_euro)
-
-    # width, freeze, and cap table visually at row 12
     ws2.set_column(0, ccount, 18)
     ws2.freeze_panes(2, 1)
     ws2.autofilter(1, 0, min(12, 1 + rcount), ccount)
 
-# ===============================================================
-# SUMMARY  (keep your improved, nicely formatted version)
-# ===============================================================
-summary_rows = [
-    ("Company", company, "text"),
-    ("Scenario", (pss_scenario if company=="PSS" else "MDKB Base"), "text"),
-    ("FCF Source", fcf_source, "text"),
-    ("EV", EV, "euro"),
-    ("Equity", EqV, "euro"),
-    ("IRR (FCF)", IRR_fcf, "pct"),
-    ("IRR (Net)", IRR_net, "pct"),
-    ("WACC", WACC, "pct"),
-    ("Re", Re, "pct"),
-    ("Rd", rd, "pct"),
-    ("Risk-free rate", rf, "pct"),
-    ("Market risk premium", mrp, "pct"),
-    ("Beta", beta, "num"),
-    ("Tax rate", tax, "pct"),
-    ("Terminal growth (g)", g, "pct"),
-    ("Debt (€)", debt, "euro"),
-    ("Assumed Price MDKB (€)", assumed_price_mdkb, "euro"),
-]
-
-ws3 = workbook.add_worksheet("Summary")
-ws3.merge_range(0, 0, 1, 0, "Summary & Assumptions", fmt_title)
-ws3.write(2, 0, "Metric", fmt_header)
-ws3.write(2, 1, (company if company!="PSS" else "PSS"), fmt_header)
-
-# Define a simple format for text values and N/A placeholders
-fmt_text_right = workbook.add_format({"border":1, "align":"right"})
-fmt_num_simple = workbook.add_format({"border":1, "align":"right", "num_format":"0.00"})
-
-
-row = 3
-for label, value, kind in summary_rows:
-    ws3.write(row, 0, label, fmt_text)
-    
-    # --- START OF FIX ---
-    # Check for NaN before writing numeric types
-    is_nan = False
-    try:
-        if np.isnan(float(value)):
-            is_nan = True
-    except (TypeError, ValueError):
-        pass # Value is not a number, so it can't be NaN
-
-    if is_nan:
-        ws3.write_string(row, 1, "N/A", fmt_text_right)
-    # --- END OF FIX ---
-    
-    elif kind == "euro":
-        ws3.write_number(row, 1, float(value), fmt_euro)
-    elif kind == "pct":
-        ws3.write_number(row, 1, float(value), fmt_pct)
-    elif kind == "num":
-        ws3.write_number(row, 1, float(value), fmt_num_simple)
-    else: # kind == "text"
-        ws3.write_string(row, 1, str(value), fmt_text_right)
-    row += 1
-
-# widths & finish
-ws3.set_column("A:A", 30)
-ws3.set_column("B:B", 24)
-ws3.freeze_panes(3, 0)
-ws3.autofilter(2, 0, min(19, row-1), 1)
+    # ===============================================================
+    # SUMMARY
+    # ===============================================================
+    # (Using the previously fixed version for this section)
+    summary_rows = [
+        ("Company", company, "text"), ("Scenario", (pss_scenario if company=="PSS" else "MDKB Base"), "text"),
+        ("FCF Source", fcf_source, "text"), ("EV", EV, "euro"), ("Equity", EqV, "euro"),
+        ("IRR (FCF)", IRR_fcf, "pct"), ("IRR (Net)", IRR_net, "pct"), ("WACC", WACC, "pct"),
+        ("Re", Re, "pct"), ("Rd", rd, "pct"), ("Risk-free rate", rf, "pct"),
+        ("Market risk premium", mrp, "pct"), ("Beta", beta, "num"), ("Tax rate", tax, "pct"),
+        ("Terminal growth (g)", g, "pct"), ("Debt (€)", debt, "euro"),
+        ("Assumed Price MDKB (€)", assumed_price_mdkb, "euro"),
+    ]
+    ws3 = workbook.add_worksheet("Summary")
+    ws3.merge_range(0, 0, 1, 0, "Summary & Assumptions", fmt_title)
+    ws3.write(2, 0, "Metric", fmt_header)
+    ws3.write(2, 1, (company if company!="PSS" else "PSS"), fmt_header)
+    fmt_text_right = workbook.add_format({"border":1, "align":"right"})
+    fmt_num_simple = workbook.add_format({"border":1, "align":"right", "num_format":"0.00"})
+    row = 3
+    for label, value, kind in summary_rows:
+        ws3.write(row, 0, label, fmt_text)
+        is_nan = False
+        try:
+            if np.isnan(float(value)): is_nan = True
+        except (TypeError, ValueError): pass
+        if is_nan:
+            ws3.write_string(row, 1, "N/A", fmt_text_right)
+        elif kind == "euro": ws3.write_number(row, 1, float(value), fmt_euro)
+        elif kind == "pct": ws3.write_number(row, 1, float(value), fmt_pct)
+        elif kind == "num": ws3.write_number(row, 1, float(value), fmt_num_simple)
+        else: ws3.write_string(row, 1, str(value), fmt_text_right)
+        row += 1
+    ws3.set_column("A:A", 30)
+    ws3.set_column("B:B", 24)
+    ws3.freeze_panes(3, 0)
+    ws3.autofilter(2, 0, min(19, row-1), 1)
 
     # ===============================================================
-    # CHARTS
+    # CHARTS (--- THIS BLOCK WAS DE-INDENTED ---)
     # ===============================================================
     ws_chart_dcf = workbook.add_worksheet("Chart_DCF")
     ws_chart_irr = workbook.add_worksheet("Chart_IRR")
