@@ -73,8 +73,15 @@ df_pss_B = pd.DataFrame({
     "FCF_kEUR":    [-6884,  2749,   9054,   7716,   5322],
 }, index=years_pss)
 
-# A) Initial MPW Proposal (91M Y1) — for now identical to B (this we need to replace later on, waiting for Thomas input)
-df_pss_A = df_pss_B.copy()
+# A) Initial MPW Proposal (hardcoded from provided P&L in €m, converted to kEUR; FY29 = FY28 * 1.02)
+df_pss_A = pd.DataFrame({
+    "Sales_kEUR":  [91828, 137455, 132071, 134417, 137106],
+    "EBIT_kEUR":   [   547,  12908,  12934,  13329,  13329],
+    "Net_kEUR":    [   297,  12123,   9133,   8719,   8719],
+    "Equity_kEUR": [12596, 14731,  19219,  24750,  25850],
+    "Cash_kEUR":   [ 8176, 11205,  20394,  28367,  36000],
+    "FCF_kEUR":    [-6884,  2749,   9054,   7716,   5322],
+}, index=years_pss)
 
 # C) CAGR 15% to 2029 (55M Y1) — margins ~B; FCF numbers precomputed (drivers: Dep 1%, CapEx 1%, tax 30%, ΔNWC 10% of ΔSales)
 df_pss_C = pd.DataFrame({
