@@ -336,7 +336,7 @@ mdkb_res_standalone = compute_company_result(
 
 # Combined view: add PSS + MDKB
 if company == "PSS + MDKB (Combined)":
-    # Recompute company results with NO debt subtraction (we subtract once at group level)
+    # Recompute both companies without individual debt subtraction
     pss_res = compute_company_result(
         pss_df, title="Power Service Solutions GmbH (PSS)", fcf_source_choice=fcf_source,
         rf=rf, mrp=mrp, beta=beta, tax=tax, g=g,
@@ -352,40 +352,41 @@ if company == "PSS + MDKB (Combined)":
         respect_pss_final_fcf=False, scenario_code="X"
     )
 
-    # Additive time series (assumes same years 2025–2029)
+    # Combine series
     years = pss_res["years"]
     sales_eur = pss_res["sales"] + mdkb_res["sales"]
     ebit_eur  = pss_res["ebit"]  + mdkb_res["ebit"]
     net_eur   = pss_res["net"]   + mdkb_res["net"]
     fcfs      = [pss_res["fcfs"][i] + mdkb_res["fcfs"][i] for i in range(len(years))]
 
-    # With common WACC inputs we can (a) sum EVs or (b) recompute from combined FCFs.
-    # We do both here and use the sum-of-parts (add EVs) as the displayed EV to stay literal about "adding them".
-    EV = pss_res["EV"] + mdkb_res["EV"]
+    # --- Correct WACC logic (now includes group leverage) ---
+    Re = pss_res["Re"]
     cash_sum = pss_res["cash"] + mdkb_res["cash"]
-    EqV = EV + cash_sum - debt   # subtract group debt once
+    E_total = pss_res["EqV_asset"] + mdkb_res["EqV_asset"] - cash_sum  # pre-leverage equity value
+    D_total = debt
+    WACC = compute_wacc(E_total, D_total, Re, rd, tax)
 
-    # For tables/plots we also build PV(FCF) using a representative WACC.
-    # Use PSS WACC (same inputs anyway) — if you set different betas in future, switch to weighted WACC.
-    WACC = pss_res["WACC"]
-    Re   = pss_res["Re"]
+    # --- Valuation ---
     pv_fcfs = pv(fcfs, WACC)
-    tv = fcfs[-1]*(1+g)/(WACC-g) if WACC>g else np.nan
-    pv_tv = tv/((1+WACC)**len(fcfs)) if not np.isnan(tv) else 0
+    tv = fcfs[-1] * (1 + g) / (WACC - g) if WACC > g else np.nan
+    pv_tv = tv / ((1 + WACC) ** len(fcfs)) if not np.isnan(tv) else 0
+    EV = sum(pv_fcfs) + pv_tv
+    EqV = EV + cash_sum - debt
 
-    # Display df and dfres (summed)
-    # Union columns and sum by common names (Sales/EBIT/Net/Equity/Cash/FCF)
+    # --- Display DataFrames ---
     pss_disp = pss_res["df"].copy()
     mdkb_disp = mdkb_res["df"].copy()
-    # Ensure all possible cols exist
-    for col in ["Sales_kEUR","EBIT_kEUR","Net_kEUR","Equity_kEUR","Cash_kEUR","FCF_kEUR"]:
-        if col not in pss_disp.columns:  pss_disp[col]=0
-        if col not in mdkb_disp.columns: mdkb_disp[col]=0
-    comb_disp = pss_disp[["Year","Sales_kEUR","EBIT_kEUR","Net_kEUR","Equity_kEUR","Cash_kEUR","FCF_kEUR"]].copy()
+    for col in ["Sales_kEUR", "EBIT_kEUR", "Net_kEUR", "Equity_kEUR", "Cash_kEUR", "FCF_kEUR"]:
+        if col not in pss_disp.columns:
+            pss_disp[col] = 0
+        if col not in mdkb_disp.columns:
+            mdkb_disp[col] = 0
+    comb_disp = pss_disp[["Year", "Sales_kEUR", "EBIT_kEUR", "Net_kEUR", "Equity_kEUR", "Cash_kEUR", "FCF_kEUR"]].copy()
     comb_disp.set_index("Year", inplace=True)
-    m2 = mdkb_disp[["Year","Sales_kEUR","EBIT_kEUR","Net_kEUR","Equity_kEUR","Cash_kEUR","FCF_kEUR"]].copy().set_index("Year")
+    m2 = mdkb_disp[["Year", "Sales_kEUR", "EBIT_kEUR", "Net_kEUR", "Equity_kEUR", "Cash_kEUR", "FCF_kEUR"]].copy().set_index("Year")
     comb_disp = comb_disp.add(m2, fill_value=0).reset_index()
 
+    # --- Result table ---
     dfres = pd.DataFrame({
         "Year": [str(y) for y in years],
         "Sales (€)": sales_eur,
@@ -396,6 +397,7 @@ if company == "PSS + MDKB (Combined)":
     })
 
     title = "Combined — PSS + MDKB"
+
 else:
     # Single company branch: lift from the prepared standalones
     if company == "PSS":
